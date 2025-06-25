@@ -1,5 +1,6 @@
 import React from "react";
-import { useNavigate } from "react-router-dom";
+// --- CHANGE 1: Import the Link component ---
+import { Link, useNavigate } from "react-router-dom";
 import { useAdminAuth } from "@/context/AdminAuthContext";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-// --- THIS IS THE MISSING IMPORT ---
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,7 +28,6 @@ import {
 import AppNavbar from "@/components/AppNavbar";
 import { Edit, Trash2, Plus, Check, X, Loader2, ShieldCheck } from "lucide-react";
 
-// --- Firebase Imports ---
 import { db } from "@/integrations/firebase/client";
 import {
   collection,
@@ -42,14 +41,12 @@ import {
 } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
 
-// --- Type Definition (Unchanged) ---
 type Employee = {
   id: string;
   name: string;
   email: string;
 };
 
-// --- Firestore Data Functions (Unchanged) ---
 const fetchEmployees = async (): Promise<Employee[]> => {
   const employeesCollection = collection(db, "employees");
   const q = query(employeesCollection, orderBy("name"));
@@ -137,7 +134,6 @@ export default function AdminEmployees() {
     }
   };
 
-
   const handleAddEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!addFormData.name.trim() || !addFormData.email.trim()) {
@@ -148,7 +144,6 @@ export default function AdminEmployees() {
       });
       return;
     }
-
     setIsAdding(true);
     try {
       await addEmployee(addFormData);
@@ -472,9 +467,10 @@ export default function AdminEmployees() {
                               />
                             </div>
                           ) : (
-                            <span className="font-medium text-gray-900 dark:text-white">
+                            // --- CHANGE 2: Wrap the employee name in a Link component ---
+                            <Link to={`/admin/employees/${emp.id}`} className="font-medium text-primary hover:underline">
                               {emp.name}
-                            </span>
+                            </Link>
                           )}
                         </td>
                         <td className="px-4 py-3">
@@ -557,7 +553,6 @@ export default function AdminEmployees() {
                                 )}
                               </>
                             )}
-
                             <Button
                               size="sm"
                               variant="outline"

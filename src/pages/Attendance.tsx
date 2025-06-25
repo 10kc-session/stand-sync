@@ -13,7 +13,7 @@ import {
   doc,
 } from "firebase/firestore";
 
-// --- Component Imports ---
+// --- Component and Hook Imports ---
 import AppNavbar from "@/components/AppNavbar";
 import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
@@ -32,15 +32,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import "./Attendance.css";
+// --- CHANGE 1: Import the Admin Auth hook ---
+import { useAdminAuth } from "@/context/AdminAuthContext";
 import { Loader2 } from "lucide-react";
+import "./Attendance.css";
 
-// --- Type Definitions for Firestore ---
+// --- Type Definitions ---
 type Employee = { id: string; name: string; email: string };
 type Standup = { id: string; scheduled_at: Timestamp };
 type Attendance = { employee_id: string; status: string | null };
 
 export default function Attendance() {
+  // --- CHANGE 2: Call the hook to get admin status ---
+  const { admin } = useAdminAuth();
+
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<Record<string, Attendance>>({});
   const [loading, setLoading] = useState(true);
@@ -155,7 +160,7 @@ export default function Attendance() {
     });
 
     await batch.commit();
-    await fetchData(); // Refetch all data to update UI
+    await fetchData();
     setEditing(false);
     toast({ title: "Success", description: "Attendance has been saved." });
     setLoading(false);
@@ -180,7 +185,6 @@ export default function Attendance() {
     }));
 
     try {
-      // https://script.google.com/macros/s/AKfycbzaRO0VUstPMLRbDPNQEHhpbrChn37aNVhfhS6mt0SJ_QCQ-wK78Un-LwETZiI1PqWdjw/exec
       await fetch(
         "https://script.google.com/macros/s/AKfycbzaRO0VUstPMLRbDPNQEHhpbrChn37aNVhfhS6mt0SJ_QCQ-wK78Un-LwETZiI1PqWdjw/exec",
         {
@@ -215,9 +219,13 @@ export default function Attendance() {
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
         <div className="card-style w-full" style={{ maxWidth: 700 }}>
           <h1 style={{ marginBottom: 18 }}>Attendance</h1>
-          <Button onClick={handleSyncSheet} disabled={loading}>
-            Resync to Google Sheet
-          </Button>
+
+          {/* --- CHANGE 3: Conditionally render the "Resync" button for admins only --- */}
+          {admin && (
+            <Button onClick={handleSyncSheet} disabled={loading}>
+              Resync to Google Sheet
+            </Button>
+          )}
 
           {loading ? (
             <div className="flex justify-center items-center p-8">
@@ -233,13 +241,19 @@ export default function Attendance() {
                     Present: {presentCount} / {totalEmployees}
                   </span>
                 </div>
-                {!editing ? (
-                  <Button variant="outline" size="sm" onClick={handleEdit}>Edit</Button>
-                ) : (
-                  <div className="flex gap-2">
-                    <Button variant="outline" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
-                    <Button size="sm" onClick={handleSave}>Save</Button>
-                  </div>
+
+                {/* --- CHANGE 4: Conditionally render the "Edit" / "Save" / "Cancel" buttons for admins only --- */}
+                {admin && (
+                  <>
+                    {!editing ? (
+                      <Button variant="outline" size="sm" onClick={handleEdit}>Edit</Button>
+                    ) : (
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
+                        <Button size="sm" onClick={handleSave}>Save</Button>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
               <div style={{ overflowX: "auto", width: "100%", marginTop: 10 }}>
@@ -258,7 +272,7 @@ export default function Attendance() {
                           : (attendance[emp.id]?.status === 'Present' ? 'table-row-present' : 'table-row-missed')}>
                         <TableCell>{emp.name}</TableCell>
                         <TableCell>
-                          {editing ? (
+                          {editing && admin ? ( // Also ensure only admin can see the select box
                             <Select value={editedAtt[emp.id]} onValueChange={(value) => handleChange(emp.id, value)}>
                               <SelectTrigger className="w-[180px]">
                                 <SelectValue placeholder="Set status" />

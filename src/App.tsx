@@ -8,7 +8,7 @@ import { AdminAuthProvider } from "./context/AdminAuthContext";
 import { UserAuthProvider } from "./context/UserAuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import AdminProtectedRoute from "./components/AdminProtectedRoute";
-import HomeRedirector from "./components/HomeRedirector"; // <-- IMPORT NEW COMPONENT
+import HomeRedirector from "./components/HomeRedirector";
 
 import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
@@ -18,6 +18,8 @@ import AdminLogin from "./pages/AdminLogin";
 import AdminHome from "./pages/AdminHome";
 import AdminEmployees from "./pages/AdminEmployees";
 import AuthPage from "./pages/AuthPage";
+// --- CHANGE 1: Import the new detail page component ---
+import AdminEmployeeDetail from "./pages/AdminEmployeeDetail";
 
 const queryClient = new QueryClient();
 
@@ -33,10 +35,8 @@ const App = () => (
               <Route path="/auth" element={<AuthPage />} />
               <Route path="/admin/login" element={<AdminLogin />} />
 
-              {/* --- CHANGE 1: Use HomeRedirector for the root path --- */}
               <Route path="/" element={<HomeRedirector />} />
 
-              {/* ProtectedRoute is still used for other user pages */}
               <Route
                 path="/standups"
                 element={
@@ -67,6 +67,17 @@ const App = () => (
                 element={
                   <AdminProtectedRoute>
                     <AdminEmployees />
+                  </AdminProtectedRoute>
+                }
+              />
+
+              {/* --- CHANGE 2: Add the new dynamic route --- */}
+              {/* The ':employeeId' part is a URL parameter that can change */}
+              <Route
+                path="/admin/employees/:employeeId"
+                element={
+                  <AdminProtectedRoute>
+                    <AdminEmployeeDetail />
                   </AdminProtectedRoute>
                 }
               />
