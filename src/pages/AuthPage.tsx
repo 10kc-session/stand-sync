@@ -6,8 +6,8 @@ import {
   signInWithPopup,
   GoogleAuthProvider,
   updateProfile,
+  sendPasswordResetEmail, // --- CHANGE 1: Import the password reset function ---
 } from "firebase/auth";
-// --- CHANGE 1: Using consistent import path ---
 import { auth } from "@/integrations/firebase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,7 @@ import AppNavbar from "@/components/AppNavbar";
 import { useNavigate } from "react-router-dom";
 import { FcGoogle } from "react-icons/fc";
 import { useUserAuth } from "@/context/UserAuthContext";
+import { useToast } from "@/components/ui/use-toast";
 
 enum Mode {
   Login = "Login",
@@ -33,12 +34,37 @@ export default function AuthPage() {
 
   const { user, loading: userLoading } = useUserAuth();
   const navigate = useNavigate();
+  const { toast } = useToast();
 
   useEffect(() => {
     if (!userLoading && user) {
       navigate("/standups");
     }
   }, [user, userLoading, navigate]);
+
+  // --- CHANGE 2: Add the password reset handler ---
+  const handlePasswordReset = async () => {
+    if (!email) {
+      setError("Please enter your email address to reset your password.");
+      return;
+    }
+    setLoadingForm(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setMessage("Password reset email sent! Please check your inbox (and spam folder).");
+    } catch (error: any) {
+      if (error.code === 'auth/user-not-found') {
+        setError("No account found with this email address.");
+      } else {
+        setError("Failed to send password reset email. Please try again.");
+      }
+      console.error("Password reset error:", error);
+    } finally {
+      setLoadingForm(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,19 +75,6 @@ export default function AuthPage() {
     if (mode === Mode.Login) {
       try {
         await signInWithEmailAndPassword(auth, email, password);
-
-        // --- CHANGE 2: Removed the email verification check ---
-        // We removed this block to allow an admin to log in even if their email
-        // is not verified. Our AdminAuthContext will handle role checking,
-        // and ProtectedRoute can handle verification for regular users if needed.
-        /*
-        if (!userCredential.user.emailVerified) {
-          setError("Email not verified...");
-          await auth.signOut();
-        }
-        */
-        // On successful login, the useEffect hook will now handle the redirect.
-
       } catch (error: any) {
         if (error.code === 'auth/invalid-credential' || error.code === 'auth/wrong-password') {
           setError("Invalid email or password. Please try again.");
@@ -72,7 +85,7 @@ export default function AuthPage() {
     } else { // Signup Mode
       try {
         if (password.length < 6) {
-          throw new Error("Password must be at least 6 characters long.");
+          throw new Error("Password should be at least 6 characters long.");
         }
         const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         await updateProfile(userCredential.user, { displayName: name });
@@ -95,7 +108,6 @@ export default function AuthPage() {
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
-      // On successful login, the useEffect hook will handle the redirect.
     } catch (error: any) {
       setError("Failed to sign in with Google. Please try again.");
       console.error("Google sign-in error:", error);
@@ -166,7 +178,14 @@ export default function AuthPage() {
                 <Button type="submit" className="w-full mt-2" disabled={loadingForm}>
                   {loadingForm ? "Loading..." : mode}
                 </Button>
-                <div className="flex justify-center text-sm pt-3">
+
+                {/* --- CHANGE 3: Add the Forgot Password and Switch Mode links --- */}
+                <div className="flex justify-between text-sm pt-2">
+                  {mode === 'Login' && (
+                    <button type="button" className="underline text-muted-foreground hover:text-primary" onClick={handlePasswordReset}>
+                      Forgot Password?
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="underline"
@@ -175,12 +194,15 @@ export default function AuthPage() {
                       setError(null);
                       setMessage(null);
                     }}
+                    // Push the switch mode button to the right if forgot password isn't visible
+                    style={{ marginLeft: mode === Mode.Signup ? 'auto' : '' }}
                   >
                     {mode === Mode.Login
                       ? "Don't have an account? Sign up"
                       : "Already have an account? Login"}
                   </button>
                 </div>
+
               </div>
             </form>
           </CardContent>

@@ -106,7 +106,6 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
             const allRecords = rows.slice(1);
             const now = new Date();
 
-            // --- Filtering logic is now simplified back to daily/monthly ---
             const filteredRecords = allRecords.filter(row => {
                 if (!row || !row[0]) return false;
                 const timestamp = parseCustomDate(row[0]);
@@ -114,7 +113,7 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
 
                 if (timeFrame === "daily") {
                     return timestamp.toDateString() === now.toDateString();
-                } else { // monthly
+                } else {
                     return timestamp.getMonth() === now.getMonth() && timestamp.getFullYear() === now.getFullYear();
                 }
             });
@@ -123,10 +122,10 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
                 return { positiveComments: [], improvementAreas: [], graphData: null };
             }
 
-            // ... calculation and AI logic remains the same ...
             let totalUnderstanding = 0;
             let totalInstructor = 0;
             const allComments = [];
+
             for (const row of filteredRecords) {
                 if (!Array.isArray(row)) continue;
                 totalUnderstanding += Number(row[1]) || 0;
@@ -136,18 +135,28 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
                     allComments.push(commentForAI);
                 }
             }
+
             const avgUnderstanding = filteredRecords.length > 0 ? totalUnderstanding / filteredRecords.length : 0;
             const avgInstructor = filteredRecords.length > 0 ? totalInstructor / filteredRecords.length : 0;
+
             const graphData = {
                 totalFeedbacks: filteredRecords.length,
                 avgUnderstanding: parseFloat(avgUnderstanding.toFixed(2)),
                 avgInstructor: parseFloat(avgInstructor.toFixed(2)),
             };
-            let summary = { positiveComments: [], improvementAreas: [] };
+
+            let summary = { positiveFeedback: [], improvementAreas: [] };
             if (allComments.length > 0) {
                 const genAI = new GoogleGenerativeAI(getGeminiKey());
                 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-                const prompt = `From the following user feedback comments, analyze them. Return a valid JSON object with two keys: "positiveComments" and "improvementAreas". "positiveComments" should be an array of the top 3 most positive verbatim quotes. "improvementAreas" should be an array of the top 3 distinct summarized areas for improvement. If there are fewer than 3 of any category, return what you can. If there are no comments, return empty arrays. Comments: """${allComments.join("\n")}"""`;
+
+                // --- NEW, MORE DETAILED PROMPT FOR THE AI ---
+                const prompt = `From the following list of verbatim feedback comments, perform an analysis. Return a valid JSON object with two keys: "positiveFeedback" and "improvementAreas".
+              For "positiveFeedback", return an array of up to 3 objects, where each object has a "quote" key (the verbatim positive comment) and a "keywords" key (an array of 1-3 relevant keywords from the quote).
+              For "improvementAreas", return an array of up to 3 objects, where each object has a "theme" key (a summarized topic like 'Pacing' or 'Interaction') and a "suggestion" key (a concise, actionable suggestion for the instructor).
+              If there are no comments that fit a category, return an empty array for that key.
+              Comments: """${allComments.join("\n")}"""`;
+
                 const result = await model.generateContent(prompt);
                 const rawResponse = result.response.text();
                 const startIndex = rawResponse.indexOf('{');
@@ -155,8 +164,9 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
                 const jsonText = rawResponse.substring(startIndex, endIndex + 1);
                 summary = JSON.parse(jsonText);
             }
+
             return {
-                positiveComments: summary.positiveComments || [],
+                positiveFeedback: summary.positiveFeedback || [],
                 improvementAreas: summary.improvementAreas || [],
                 graphData,
             };
