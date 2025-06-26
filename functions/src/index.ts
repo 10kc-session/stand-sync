@@ -1,178 +1,164 @@
 import * as admin from "firebase-admin";
 import { DecodedIdToken } from "firebase-admin/auth";
-import { GoogleAuth } from "google-auth-library";
+import { JWT } from "google-auth-library";
 import { google } from "googleapis";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { parse, isSameDay, isSameMonth, startOfDay, parseISO } from "date-fns";
 
 admin.initializeApp();
 
-// addAdminRole function is correct and remains unchanged
-interface AddAdminRoleData {
-    email: string;
-}
-interface CustomDecodedIdToken extends DecodedIdToken {
-    isAdmin?: boolean;
-}
-export const addAdminRole = onCall<AddAdminRoleData>(async (request) => {
-    if (!request.auth) {
-        throw new HttpsError("unauthenticated", "You must be authenticated to call this function.");
-    }
-    const token = request.auth.token as CustomDecodedIdToken;
-    if (token.isAdmin !== true) {
-        throw new HttpsError("permission-denied", "Only an admin can perform this action.");
-    }
-    const email = request.data.email;
-    if (typeof email !== "string" || email.length === 0) {
-        throw new HttpsError("invalid-argument", "The function must be called with a valid email address.");
-    }
-    try {
-        const user = await admin.auth().getUserByEmail(email);
-        await admin.auth().setCustomUserClaims(user.uid, { isAdmin: true });
-        return { message: `Success! ${email} has been made an admin.` };
-    } catch (error: unknown) {
-        console.error("Error setting custom claim:", error);
-        if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'auth/user-not-found') {
-            throw new HttpsError("not-found", "No user account was found for this email address.");
-        }
-        throw new HttpsError("internal", "An unexpected error occurred while processing your request.");
-    }
-});
-
-
-interface GetFeedbackSummaryData {
-    employeeId: string;
-    timeFrame: "daily" | "monthly";
-}
-
+// Helper to load Gemini key
 function getGeminiKey(): string {
     const key = process.env.GEMINI_KEY;
-    if (!key) {
-        throw new Error("Gemini API Key (GEMINI_KEY) is not configured in the function's environment.");
-    }
+    if (!key) throw new Error("GEMINI_KEY not set.");
     return key;
 }
 
-function parseCustomDate(dateString: string): Date | null {
-    if (!dateString || typeof dateString !== 'string') return null;
-    const parts = dateString.split(' ');
-    if (parts.length < 1) return null;
-    const dateParts = parts[0].split('/');
-    if (dateParts.length !== 3) return null;
-    const month = parseInt(dateParts[0], 10) - 1;
-    const day = parseInt(dateParts[1], 10);
-    const year = parseInt(dateParts[2], 10);
-    const date = new Date(year, month, day);
-    if (isNaN(date.getTime())) return null;
-    return date;
+// --- 1) Grant admin role ---
+interface AddAdminRoleData { email: string; }
+interface CustomDecodedIdToken extends DecodedIdToken { isAdmin?: boolean; }
+
+export const addAdminRole = onCall<AddAdminRoleData>(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+    const caller = request.auth.token as CustomDecodedIdToken;
+    if (!caller.isAdmin) throw new HttpsError("permission-denied", "Admins only.");
+
+    const email = request.data.email?.trim();
+    if (!email) {
+        throw new HttpsError("invalid-argument", "Provide a valid email.");
+    }
+
+    try {
+        const user = await admin.auth().getUserByEmail(email);
+        await admin.auth().setCustomUserClaims(user.uid, { isAdmin: true });
+        return { message: `${email} is now an admin.` };
+    } catch (err: any) {
+        if (err.code === "auth/user-not-found") {
+            throw new HttpsError("not-found", "User not found.");
+        }
+        console.error("addAdminRole error:", err);
+        throw new HttpsError("internal", "Could not set admin role.");
+    }
+});
+
+// --- 2) Fetch feedback summary (daily, monthly, specific) ---
+interface GetFeedbackSummaryData {
+    employeeId: string;
+    timeFrame: "daily" | "monthly" | "specific";
+    date?: string;  // client sends ISO string, e.g. "2025-06-20T00:00:00.000Z"
 }
 
 export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
-    { timeoutSeconds: 120, memory: "512MiB", secrets: ["GEMINI_KEY"] },
+    { timeoutSeconds: 120, memory: "512MiB", secrets: ["GEMINI_KEY", "SHEETS_SA_KEY"] },
     async (request) => {
         if (request.auth?.token.isAdmin !== true) {
-            throw new HttpsError("permission-denied", "Only an admin can perform this action.");
+            throw new HttpsError("permission-denied", "Admins only.");
         }
 
-        const { employeeId, timeFrame } = request.data;
-        try {
-            const employeeDoc = await admin.firestore().collection("employees").doc(employeeId).get();
-            if (!employeeDoc.exists) {
-                throw new HttpsError("not-found", "Employee not found in Firestore.");
-            }
-            const sheetUrl = employeeDoc.data()?.feedback_sheet_url;
-            if (!sheetUrl) {
-                throw new HttpsError("not-found", "Feedback sheet URL not configured for this employee.");
-            }
-            const spreadsheetIdMatch = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
-            if (!spreadsheetIdMatch || !spreadsheetIdMatch[1]) {
-                throw new HttpsError("invalid-argument", "Invalid Google Sheet URL format.");
-            }
-            const spreadsheetId = spreadsheetIdMatch[1];
+        const { employeeId, timeFrame, date: isoDateString } = request.data;
+        if (!employeeId) {
+            throw new HttpsError("invalid-argument", "Missing employeeId.");
+        }
 
-            const auth = new GoogleAuth({
+        try {
+            const empDoc = await admin.firestore().collection("employees").doc(employeeId).get();
+            if (!empDoc.exists) throw new HttpsError("not-found", "Employee not found.");
+            const sheetUrl = empDoc.data()?.feedback_sheet_url;
+            if (typeof sheetUrl !== "string") {
+                throw new HttpsError("not-found", "No feedback sheet for this employee.");
+            }
+            const match = sheetUrl.match(/\/d\/([a-zA-Z0-9-_]+)/);
+            if (!match) throw new HttpsError("invalid-argument", "Invalid Sheet URL.");
+            const spreadsheetId = match[1];
+
+            const saKeyRaw = process.env.SHEETS_SA_KEY;
+            if (!saKeyRaw) throw new HttpsError("internal", "SHEETS_SA_KEY not set.");
+            const saKey = JSON.parse(saKeyRaw);
+            const jwtClient = new JWT({
+                email: saKey.client_email,
+                key: saKey.private_key,
                 scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
             });
-            const sheets = google.sheets({ version: "v4", auth });
-            const response = await sheets.spreadsheets.values.get({
-                spreadsheetId: spreadsheetId,
-                range: "Sheet1!A:D",
-            });
-            const rows = response.data.values;
+            const sheets = google.sheets({ version: "v4", auth: jwtClient });
+
+            const resp = await sheets.spreadsheets.values.get({ spreadsheetId, range: "Sheet1!A:D" });
+            const rows = resp.data.values;
             if (!rows || rows.length < 2) {
-                return { positiveComments: [], improvementAreas: [], graphData: null };
+                return { positiveFeedback: [], improvementAreas: [], graphData: null };
             }
 
-            const allRecords = rows.slice(1);
             const now = new Date();
+            const today0 = startOfDay(now);
+            let target0: Date | null = null;
+            if (timeFrame === "specific" && isoDateString) {
+                target0 = startOfDay(parseISO(isoDateString));
+            }
 
-            const filteredRecords = allRecords.filter(row => {
-                if (!row || !row[0]) return false;
-                const timestamp = parseCustomDate(row[0]);
-                if (!timestamp) return false;
-
-                if (timeFrame === "daily") {
-                    return timestamp.toDateString() === now.toDateString();
-                } else {
-                    return timestamp.getMonth() === now.getMonth() && timestamp.getFullYear() === now.getFullYear();
-                }
+            const dataRows = rows.slice(1);
+            const filtered = dataRows.filter(row => {
+                const ts = row[0]?.toString().trim();
+                if (!ts) return false;
+                const sheetDt = parse(ts, "M/d/yyyy H:mm:ss", new Date());
+                if (isNaN(sheetDt.getTime())) return false;
+                if (timeFrame === "daily") return isSameDay(sheetDt, today0);
+                if (timeFrame === "specific" && target0) return isSameDay(sheetDt, target0);
+                return isSameMonth(sheetDt, today0);
             });
 
-            if (filteredRecords.length === 0) {
-                return { positiveComments: [], improvementAreas: [], graphData: null };
+            if (filtered.length === 0) {
+                return { positiveFeedback: [], improvementAreas: [], graphData: null };
             }
 
-            let totalUnderstanding = 0;
-            let totalInstructor = 0;
-            const allComments = [];
-
-            for (const row of filteredRecords) {
-                if (!Array.isArray(row)) continue;
-                totalUnderstanding += Number(row[1]) || 0;
-                totalInstructor += Number(row[2]) || 0;
-                const commentForAI = row[3] || "";
-                if (commentForAI && commentForAI.toLowerCase().trim() !== 'na' && commentForAI.trim().length > 0) {
-                    allComments.push(commentForAI);
+            let sumU = 0, sumI = 0;
+            const comments: string[] = [];
+            const skip = ["na", "n/a", "none", "ntg", "nil", ""];
+            for (const r of filtered) {
+                sumU += Number(r[1]) || 0;
+                sumI += Number(r[2]) || 0;
+                const txt = (r[3] || "").toString().trim();
+                if (txt && !skip.includes(txt.toLowerCase())) {
+                    comments.push(txt);
                 }
             }
 
-            const avgUnderstanding = filteredRecords.length > 0 ? totalUnderstanding / filteredRecords.length : 0;
-            const avgInstructor = filteredRecords.length > 0 ? totalInstructor / filteredRecords.length : 0;
-
+            const avgU = parseFloat((sumU / filtered.length).toFixed(2));
+            const avgI = parseFloat((sumI / filtered.length).toFixed(2));
             const graphData = {
-                totalFeedbacks: filteredRecords.length,
-                avgUnderstanding: parseFloat(avgUnderstanding.toFixed(2)),
-                avgInstructor: parseFloat(avgInstructor.toFixed(2)),
+                totalFeedbacks: filtered.length,
+                avgUnderstanding: avgU,
+                avgInstructor: avgI,
             };
 
-            let summary = { positiveFeedback: [], improvementAreas: [] };
-            if (allComments.length > 0) {
+            let positive: { quote: string; keywords: string[] }[] = [];
+            let improve: { theme: string; suggestion: string }[] = [];
+
+            if (comments.length) {
                 const genAI = new GoogleGenerativeAI(getGeminiKey());
                 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+                const prompt = `From the following list of verbatim feedback comments, perform an analysis. Return a valid JSON object with two keys: "positiveFeedback" and "improvementAreas". For "positiveFeedback", return an array of up to 3 objects, where each object has a "quote" key (the verbatim positive comment) and a "keywords" key (an array of 1-3 relevant keywords from the quote). For "improvementAreas", return an array of up to 3 objects, where each object has a "theme" key (a summarized topic like 'Pacing' or 'Interaction') and a "suggestion" key (a concise, actionable suggestion for the instructor). If there are no comments that fit a category, return an empty array for that key. Comments: """${comments.join("\n")}"""`;
 
-                // --- NEW, MORE DETAILED PROMPT FOR THE AI ---
-                const prompt = `From the following list of verbatim feedback comments, perform an analysis. Return a valid JSON object with two keys: "positiveFeedback" and "improvementAreas".
-              For "positiveFeedback", return an array of up to 3 objects, where each object has a "quote" key (the verbatim positive comment) and a "keywords" key (an array of 1-3 relevant keywords from the quote).
-              For "improvementAreas", return an array of up to 3 objects, where each object has a "theme" key (a summarized topic like 'Pacing' or 'Interaction') and a "suggestion" key (a concise, actionable suggestion for the instructor).
-              If there are no comments that fit a category, return an empty array for that key.
-              Comments: """${allComments.join("\n")}"""`;
+                const res = await model.generateContent(prompt);
+                const txt = await res.response.text();
 
-                const result = await model.generateContent(prompt);
-                const rawResponse = result.response.text();
-                const startIndex = rawResponse.indexOf('{');
-                const endIndex = rawResponse.lastIndexOf('}');
-                const jsonText = rawResponse.substring(startIndex, endIndex + 1);
-                summary = JSON.parse(jsonText);
+                // --- FINAL FIX: Add a try/catch block around JSON.parse ---
+                try {
+                    const js = txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1);
+                    if (js) { // Only parse if the extracted text is not empty
+                        const obj = JSON.parse(js);
+                        positive = obj.positiveFeedback || [];
+                        improve = obj.improvementAreas || [];
+                    }
+                } catch (e) {
+                    console.error("AI response parse error. The AI may have returned a non-JSON response due to safety settings or empty input. Falling back to empty summary.", e, "Raw AI response:", txt);
+                    // Leave positive and improve as empty arrays
+                }
             }
 
-            return {
-                positiveFeedback: summary.positiveFeedback || [],
-                improvementAreas: summary.improvementAreas || [],
-                graphData,
-            };
+            return { positiveFeedback: positive, improvementAreas: improve, graphData };
         } catch (error) {
             console.error("Error in getFeedbackSummary function:", error);
-            throw new HttpsError("internal", "An error occurred while fetching the feedback summary. Check the function logs for details.");
+            throw new HttpsError("internal", "An error occurred. Check function logs.");
         }
     }
 );

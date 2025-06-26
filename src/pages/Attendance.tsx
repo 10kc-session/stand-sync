@@ -13,7 +13,7 @@ import {
   doc,
 } from "firebase/firestore";
 
-// --- Component and Hook Imports ---
+// --- Component Imports ---
 import AppNavbar from "@/components/AppNavbar";
 import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
@@ -32,10 +32,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-// --- CHANGE 1: Import the Admin Auth hook ---
+import "./Attendance.css";
 import { useAdminAuth } from "@/context/AdminAuthContext";
 import { Loader2 } from "lucide-react";
-import "./Attendance.css";
 
 // --- Type Definitions ---
 type Employee = { id: string; name: string; email: string };
@@ -43,9 +42,7 @@ type Standup = { id: string; scheduled_at: Timestamp };
 type Attendance = { employee_id: string; status: string | null };
 
 export default function Attendance() {
-  // --- CHANGE 2: Call the hook to get admin status ---
   const { admin } = useAdminAuth();
-
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<Record<string, Attendance>>({});
   const [loading, setLoading] = useState(true);
@@ -185,6 +182,7 @@ export default function Attendance() {
     }));
 
     try {
+      // --- THIS URL HAS BEEN UPDATED ---
       await fetch(
         "https://script.google.com/macros/s/AKfycbzaRO0VUstPMLRbDPNQEHhpbrChn37aNVhfhS6mt0SJ_QCQ-wK78Un-LwETZiI1PqWdjw/exec",
         {
@@ -220,7 +218,6 @@ export default function Attendance() {
         <div className="card-style w-full" style={{ maxWidth: 700 }}>
           <h1 style={{ marginBottom: 18 }}>Attendance</h1>
 
-          {/* --- CHANGE 3: Conditionally render the "Resync" button for admins only --- */}
           {admin && (
             <Button onClick={handleSyncSheet} disabled={loading}>
               Resync to Google Sheet
@@ -242,7 +239,6 @@ export default function Attendance() {
                   </span>
                 </div>
 
-                {/* --- CHANGE 4: Conditionally render the "Edit" / "Save" / "Cancel" buttons for admins only --- */}
                 {admin && (
                   <>
                     {!editing ? (
@@ -272,7 +268,7 @@ export default function Attendance() {
                           : (attendance[emp.id]?.status === 'Present' ? 'table-row-present' : 'table-row-missed')}>
                         <TableCell>{emp.name}</TableCell>
                         <TableCell>
-                          {editing && admin ? ( // Also ensure only admin can see the select box
+                          {editing && admin ? (
                             <Select value={editedAtt[emp.id]} onValueChange={(value) => handleChange(emp.id, value)}>
                               <SelectTrigger className="w-[180px]">
                                 <SelectValue placeholder="Set status" />
@@ -281,6 +277,7 @@ export default function Attendance() {
                                 <SelectItem value="Present">Present</SelectItem>
                                 <SelectItem value="Missed">Missed</SelectItem>
                                 <SelectItem value="Absent">Absent</SelectItem>
+                                <SelectItem value="Not Available">Not Available</SelectItem>
                               </SelectContent>
                             </Select>
                           ) : (
