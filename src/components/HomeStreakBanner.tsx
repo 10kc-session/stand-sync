@@ -1,5 +1,6 @@
-
 import React from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Flame } from "lucide-react";
 
 type Props = {
   attendanceStreak: number | "N/A" | null;
@@ -7,36 +8,43 @@ type Props = {
   isAdmin: boolean;
 };
 
-const HomeStreakBanner: React.FC<Props> = ({ attendanceStreak, attendanceLoading, isAdmin }) => (
-  <div className="mb-6">
-    <div className="text-lg font-semibold text-center flex flex-col gap-1">
-      <span>Your Attendance Streak:</span>
-      <span className="text-3xl font-bold text-primary">
-        {attendanceLoading ? (
-          "Loading..."
-        ) : (
-          isAdmin || attendanceStreak === "N/A" ? (
-            "N/A"
-          ) : attendanceStreak === null || attendanceStreak === 0 ? (
-            <>
-              <span className="block text-base font-medium text-muted-foreground mt-1">
-                No attendance streak yet? <br />
-                <span className="text-primary font-bold">Every habit starts with a single step!</span><br />
-                Join your first standup today.
-              </span>
-            </>
-          ) : (
-            <>
-              {attendanceStreak}
-              <span className="text-base font-medium ml-1">
-                day{attendanceStreak === 1 ? "" : "s"}
-              </span>
-            </>
-          )
-        )}
-      </span>
-    </div>
-  </div>
-);
+const HomeStreakBanner: React.FC<Props> = ({ attendanceStreak, attendanceLoading }) => {
+
+  const renderContent = () => {
+    if (attendanceLoading) {
+      return <div className="h-10 w-24 bg-secondary rounded-md animate-pulse" />;
+    }
+
+    if (attendanceStreak === null || attendanceStreak === 0) {
+      return (
+        <div className="text-center">
+          <p className="text-3xl font-bold">0</p>
+          <p className="text-sm text-muted-foreground mt-1">Join a standup to start your streak!</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="text-center">
+        <p className="text-5xl font-extrabold text-primary">{attendanceStreak}</p>
+        <p className="text-sm font-medium text-muted-foreground mt-1">
+          day{attendanceStreak === 1 ? "" : "s"}
+        </p>
+      </div>
+    )
+  };
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-2">
+        <CardTitle className="text-sm font-medium">Attendance Streak</CardTitle>
+        <Flame className="h-5 w-5 text-orange-500" />
+      </CardHeader>
+      <CardContent>
+        {renderContent()}
+      </CardContent>
+    </Card>
+  );
+};
 
 export default HomeStreakBanner;

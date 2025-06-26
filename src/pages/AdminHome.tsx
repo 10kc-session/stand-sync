@@ -3,7 +3,6 @@ import { useAdminAuth } from "@/context/AdminAuthContext";
 import { useNavigate } from "react-router-dom";
 import AppNavbar from "@/components/AppNavbar";
 import { Button } from "@/components/ui/button";
-import "./AdminHome.css";
 
 // --- Firebase Imports ---
 import { db } from "@/integrations/firebase/client";
@@ -17,7 +16,10 @@ import {
   limit,
   Timestamp,
 } from "firebase/firestore";
-import { Loader2 } from "lucide-react";
+import { Loader2, Gauge, Clock, Users, CalendarPlus, BellRing, AlertTriangle } from "lucide-react"; // Added icons
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card"; // Added Card component
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"; // Added Alert component
+import { motion } from "framer-motion"; // Added motion for animations
 
 const AdminHome = () => {
   const { admin } = useAdminAuth();
@@ -29,7 +31,6 @@ const AdminHome = () => {
   }>({ standupTime: null, present: 0 });
 
   const [employeeCount, setEmployeeCount] = useState<number>(0);
-  // --- CHANGE 1: Add a loading state for this page's data ---
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -40,7 +41,6 @@ const AdminHome = () => {
     if (!admin) return;
 
     async function fetchSummaryAndEmployees() {
-      // --- CHANGE 2: Set loading to true at the start of the fetch ---
       setIsLoading(true);
       try {
         const employeesCollection = collection(db, "employees");
@@ -85,7 +85,6 @@ const AdminHome = () => {
         console.error("Failed to fetch admin summary:", error);
         setSummary({ standupTime: null, present: 0 });
       } finally {
-        // --- CHANGE 3: Set loading to false when the fetch is complete ---
         setIsLoading(false);
       }
     }
@@ -98,124 +97,76 @@ const AdminHome = () => {
   };
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        padding: 0,
-        margin: 0,
-      }}
-    >
+    <div className="min-h-screen flex flex-col bg-background">
       <AppNavbar />
-      <div
-        style={{
-          flex: 1,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <div className="card-style" style={{ maxWidth: 450 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              marginBottom: 20,
-            }}
-          >
-            <h1>Admin Dashboard</h1>
-          </div>
-          <div>
-            <div
-              className="banner"
-              style={{
-                marginBottom: 32,
-                marginTop: 0,
-                background: "linear-gradient(90deg,#d4eeff 0%,#cbeeec 80%)",
-              }}
-            >
-              Welcome,{" "}
-              <span style={{ color: "#088", fontWeight: 800 }}>
-                {admin?.email}!
-              </span>
-            </div>
+      <main className="flex-1 flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-md"
+        >
+          <Card className="p-6 shadow-lg">
+            <CardHeader className="flex flex-row items-center justify-between pb-4">
+              <CardTitle className="text-3xl font-bold">Admin Dashboard</CardTitle>
+              <Gauge className="h-8 w-8 text-primary" />
+            </CardHeader>
+            <CardContent>
+              <Alert className="mb-6 bg-blue-50 border-blue-200 text-blue-700">
+                <BellRing className="h-4 w-4" />
+                <AlertTitle>Welcome!</AlertTitle>
+                <AlertDescription>
+                  {/* CHANGED: Fallback to email, then 'Admin' */}
+                  Welcome, <span className="font-bold text-blue-800">{admin?.email || 'Admin'}!</span>
+                  Manage your team's standups and attendance.
+                </AlertDescription>
+              </Alert>
 
-            {/* --- CHANGE 4: Add a loading indicator check here --- */}
-            {isLoading ? (
-              <div className="flex justify-center items-center p-8">
-                <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                <span className="ml-2">Loading summary...</span>
-              </div>
-            ) : summary.standupTime ? (
-              <div style={{ marginBottom: 8 }}>
-                <div
-                  style={{
-                    fontSize: "1.08rem",
-                    color: "#185b7e",
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "12px",
-                    fontWeight: 600,
-                  }}
-                >
-                  <div>
+              {isLoading ? (
+                <div className="flex justify-center items-center py-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <span className="ml-3 text-lg text-muted-foreground">Loading summary...</span>
+                </div>
+              ) : summary.standupTime ? (
+                <div className="space-y-4 text-lg font-semibold text-foreground">
+                  <div className="flex items-center gap-3">
+                    <Clock className="h-5 w-5 text-muted-foreground" />
                     <span>Today's Standup:</span>
-                    <span
-                      style={{
-                        marginLeft: 11,
-                        color: "#117ddb",
-                        fontSize: "1.21rem",
-                        fontWeight: "bold",
-                      }}
-                    >
+                    <span className="ml-2 text-primary font-bold">
                       {summary.standupTime}
                     </span>
                   </div>
-                  <div>
+                  <div className="flex items-center gap-3">
+                    <Users className="h-5 w-5 text-muted-foreground" />
                     <span>Attendance:</span>
-                    <span
-                      style={{
-                        marginLeft: 9,
-                        color: "#18ad7c",
-                        fontWeight: "bold",
-                        fontSize: "1.19rem",
-                      }}
-                    >
+                    <span className="ml-2 text-green-700 font-bold">
                       {summary.present} / {employeeCount}
                     </span>
                   </div>
                 </div>
-              </div>
-            ) : (
-              <div>
-                <div
-                  className="banner"
-                  style={{
-                    color: "#b85c42",
-                    background:
-                      "linear-gradient(90deg,#ffece6 0%, #f4e6e6 100%)",
-                    marginTop: 20,
-                    fontWeight: 600,
-                    fontSize: "1.07rem",
-                  }}
-                >
-                  No standup scheduled today.
+              ) : (
+                <div>
+                  <Alert className="mb-6 bg-orange-50 border-orange-200 text-orange-700">
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>No Standup Today</AlertTitle>
+                    <AlertDescription>
+                      There is no standup scheduled for today.
+                    </AlertDescription>
+                  </Alert>
+                  <Button
+                    size="lg"
+                    className="w-full mt-6 font-bold"
+                    onClick={handleScheduleStandup}
+                    data-testid="admin-schedule-standup-home-btn"
+                  >
+                    Schedule Standup <CalendarPlus className="ml-2 h-5 w-5" />
+                  </Button>
                 </div>
-                <Button
-                  size="lg"
-                  className="w-full mt-6 font-bold"
-                  onClick={handleScheduleStandup}
-                  data-testid="admin-schedule-standup-home-btn"
-                >
-                  Schedule Standup
-                </Button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      </main>
     </div>
   );
 };

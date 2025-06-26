@@ -31,10 +31,13 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import "./Attendance.css";
+}
+  from "@/components/ui/select";
 import { useAdminAuth } from "@/context/AdminAuthContext";
 import { Loader2 } from "lucide-react";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { motion } from "framer-motion";
+import { cn } from "@/lib/utils"; // Import cn for conditional classnames
 
 // --- Type Definitions ---
 type Employee = { id: string; name: string; email: string };
@@ -156,11 +159,17 @@ export default function Attendance() {
       batch.set(attendanceDocRef, dataToSet, { merge: true });
     });
 
-    await batch.commit();
-    await fetchData();
-    setEditing(false);
-    toast({ title: "Success", description: "Attendance has been saved." });
-    setLoading(false);
+    try {
+      await batch.commit();
+      await fetchData();
+      setEditing(false);
+      toast({ title: "Success", description: "Attendance has been saved." });
+    } catch (error) {
+      console.error("Failed to save attendance:", error);
+      toast({ title: "Error", description: "Failed to save attendance.", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSyncSheet = async () => {
@@ -182,7 +191,6 @@ export default function Attendance() {
     }));
 
     try {
-      // --- THIS URL HAS BEEN UPDATED ---
       await fetch(
         "https://script.google.com/macros/s/AKfycbzaRO0VUstPMLRbDPNQEHhpbrChn37aNVhfhS6mt0SJ_QCQ-wK78Un-LwETZiI1PqWdjw/exec",
         {
@@ -212,87 +220,122 @@ export default function Attendance() {
   ).length;
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+    <div className="min-h-screen flex flex-col bg-background">
       <AppNavbar />
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
-        <div className="card-style w-full" style={{ maxWidth: 700 }}>
-          <h1 style={{ marginBottom: 18 }}>Attendance</h1>
-
-          {admin && (
-            <Button onClick={handleSyncSheet} disabled={loading}>
-              Resync to Google Sheet
-            </Button>
-          )}
-
-          {loading ? (
-            <div className="flex justify-center items-center p-8">
-              <Loader2 className="h-6 w-6 animate-spin" />
-              <span className="ml-2">Loading...</span>
-            </div>
-          ) : (
-            <>
-              <div style={{ margin: "18px 0 7px 0", fontWeight: 600, color: "#27588a", fontSize: "1.05rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <span>Today's Attendance</span>
-                  <span style={{ marginLeft: 20, color: "#188d4c", fontWeight: 800 }}>
-                    Present: {presentCount} / {totalEmployees}
-                  </span>
+      <main className="flex-1 flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-4xl"
+        >
+          <Card className="p-6 shadow-lg">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+              <CardTitle className="text-3xl font-bold">Attendance</CardTitle>
+              {admin && (
+                <Button onClick={handleSyncSheet} disabled={loading} variant="outline">
+                  Resync to Google Sheet
+                </Button>
+              )}
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <div className="flex justify-center items-center p-8">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <span className="ml-3 text-lg text-muted-foreground">Loading attendance...</span>
                 </div>
+              ) : (
+                <>
+                  <div className="flex justify-between items-center mb-6 pt-2">
+                    <div className="font-semibold text-lg text-foreground">
+                      <span>Today's Attendance</span>
+                      <span className="ml-4 text-green-700 font-extrabold">
+                        Present: {presentCount} / {totalEmployees}
+                      </span>
+                    </div>
 
-                {admin && (
-                  <>
-                    {!editing ? (
-                      <Button variant="outline" size="sm" onClick={handleEdit}>Edit</Button>
-                    ) : (
-                      <div className="flex gap-2">
-                        <Button variant="outline" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
-                        <Button size="sm" onClick={handleSave}>Save</Button>
-                      </div>
+                    {admin && (
+                      <>
+                        {!editing ? (
+                          <Button variant="secondary" size="sm" onClick={handleEdit}>Edit</Button>
+                        ) : (
+                          <div className="flex gap-2">
+                            <Button variant="outline" size="sm" onClick={() => {
+                              setEditing(false);
+                              setEditedAtt({});
+                            }}>Cancel</Button>
+                            <Button size="sm" onClick={handleSave}>Save</Button>
+                          </div>
+                        )}
+                      </>
                     )}
-                  </>
-                )}
-              </div>
-              <div style={{ overflowX: "auto", width: "100%", marginTop: 10 }}>
-                <Table className="table-style">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Status</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {employees.map((emp) => (
-                      <TableRow key={emp.id} className={
-                        editing
-                          ? (editedAtt[emp.id] === 'Present' ? 'table-row-present' : 'table-row-missed')
-                          : (attendance[emp.id]?.status === 'Present' ? 'table-row-present' : 'table-row-missed')}>
-                        <TableCell>{emp.name}</TableCell>
-                        <TableCell>
-                          {editing && admin ? (
-                            <Select value={editedAtt[emp.id]} onValueChange={(value) => handleChange(emp.id, value)}>
-                              <SelectTrigger className="w-[180px]">
-                                <SelectValue placeholder="Set status" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="Present">Present</SelectItem>
-                                <SelectItem value="Missed">Missed</SelectItem>
-                                <SelectItem value="Absent">Absent</SelectItem>
-                                <SelectItem value="Not Available">Not Available</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          ) : (
-                            attendance[emp.id]?.status || <span style={{ color: "#be8808" }}>Missed</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
+                  </div>
+
+                  <div className="overflow-x-auto max-h-[60vh] overflow-y-auto rounded-md border">
+                    <Table>
+                      <TableHeader className="sticky top-0 bg-secondary/80 z-10">
+                        <TableRow>
+                          <TableHead className="w-1/2">Name</TableHead>
+                          <TableHead className="w-1/2">Status</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {employees.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={2} className="h-24 text-center text-muted-foreground">
+                              No employees found.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          employees.map((emp) => (
+                            <TableRow key={emp.id}>
+                              <TableCell className="font-medium">
+                                {emp.name}
+                              </TableCell>
+                              <TableCell>
+                                {editing && admin ? (
+                                  <Select
+                                    value={editedAtt[emp.id]}
+                                    onValueChange={(value) => handleChange(emp.id, value)}
+                                  >
+                                    {/* Apply conditional styling to SelectTrigger based on selected value */}
+                                    <SelectTrigger
+                                      className={cn(
+                                        "w-full md:w-[180px]",
+                                        editedAtt[emp.id] === 'Present' ? 'text-green-600' : 'text-orange-600'
+                                      )}
+                                    >
+                                      <SelectValue placeholder="Set status" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="Present">Present</SelectItem>
+                                      <SelectItem value="Missed">Missed</SelectItem>
+                                      <SelectItem value="Absent">Absent</SelectItem>
+                                      <SelectItem value="Not Available">Not Available</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                ) : (
+                                  <span className={
+                                    attendance[emp.id]?.status === 'Present'
+                                      ? 'text-green-600 font-semibold'
+                                      : 'text-orange-600 font-semibold'
+                                  }>
+                                    {attendance[emp.id]?.status || 'Missed'}
+                                  </span>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      </main>
     </div>
   );
 }

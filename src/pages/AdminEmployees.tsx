@@ -25,7 +25,8 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import AppNavbar from "@/components/AppNavbar";
-import { Edit, Trash2, Plus, Check, X, Loader2, ShieldCheck, Link2 } from "lucide-react";
+import { Edit, Trash2, Plus, Check, X, Loader2, ShieldCheck, Search, Link2 } from "lucide-react";
+import { TableRow, TableCell } from "@/components/ui/table"; // <-- Add this line
 
 import { db } from "@/integrations/firebase/client";
 import {
@@ -39,6 +40,8 @@ import {
   query,
 } from "firebase/firestore";
 import { getFunctions, httpsCallable } from "firebase/functions";
+import { motion } from "framer-motion"; // Import motion for animations
+
 
 type Employee = {
   id: string;
@@ -81,15 +84,16 @@ export default function AdminEmployees() {
   const [employees, setEmployees] = React.useState<Employee[] | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const [isAddDialogOpen, setIsAddDialogOpen] = React.useState(false);
 
+  const [searchQuery, setSearchQuery] = React.useState("");
+
+  const [isAddDialogOpen, setIsAddDialogOpen] = React.useState(false);
   const initialFormData = { name: "", email: "", feedback_sheet_url: "" };
   const [addFormData, setAddFormData] = React.useState(initialFormData);
-
+  const [isAdding, setIsAdding] = React.useState(false);
   const [isEditMode, setIsEditMode] = React.useState(false);
   const [editingEmployeeId, setEditingEmployeeId] = React.useState<string | null>(null);
   const [editFormData, setEditFormData] = React.useState<{ [key: string]: { name: string; email: string; feedback_sheet_url?: string }; }>({});
-  const [isAdding, setIsAdding] = React.useState(false);
   const [isUpdating, setIsUpdating] = React.useState(false);
   const [isDeleting, setIsDeleting] = React.useState(false);
   const [isPromoting, setIsPromoting] = React.useState(false);
@@ -268,17 +272,46 @@ export default function AdminEmployees() {
     setEditFormData({});
   };
 
+  const filteredEmployees = React.useMemo(() => {
+    if (!employees) return [];
+    if (!searchQuery) return employees;
+
+    const lowercasedQuery = searchQuery.toLowerCase();
+    return employees.filter(emp =>
+      emp.name.toLowerCase().includes(lowercasedQuery) ||
+      emp.email.toLowerCase().includes(lowercasedQuery)
+    );
+  }, [employees, searchQuery]);
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <AppNavbar />
       <main className="flex-1 flex flex-col items-center py-10 px-4">
-        <Card className="w-full max-w-6xl shadow-sm">
-          <CardHeader>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <CardTitle className="text-2xl font-bold text-gray-900 dark:text-white">
-                Manage Employees {employees ? `(${employees.length})` : ""}
-              </CardTitle>
-              <div className="flex flex-wrap gap-2">
+        {/* Added motion.div for the entrance animation */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-6xl" // These classes apply to the motion.div wrapper
+        >
+          <Card className="shadow-sm"> {/* Card now only receives shadow-sm */}
+            <CardHeader>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <CardTitle className="text-2xl font-bold text-gray-900 dark:text-white">
+                  Manage Employees {filteredEmployees ? `(${filteredEmployees.length})` : ""}
+                </CardTitle>
+                <div className="relative w-full sm:w-64">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    type="search"
+                    placeholder="Search by name or email..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-8 w-full"
+                  />
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 mt-4">
                 <Dialog
                   open={isAddDialogOpen}
                   onOpenChange={setIsAddDialogOpen}
@@ -326,114 +359,119 @@ export default function AdminEmployees() {
                 </Button>
                 <Button variant="outline" onClick={() => navigate("/admin")}>Back</Button>
               </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {loading && (
-              <div className="flex justify-center items-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                <span className="ml-2">Loading...</span>
-              </div>
-            )}
-            {error && <div className="text-red-600 p-4 rounded-md bg-red-50">{error}</div>}
-            {employees && (
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <caption className="sr-only">List of employees</caption>
-                  <thead>
-                    <tr className="bg-muted/40 border-b">
-                      <th className="text-left px-4 py-3 font-medium">Name</th>
-                      <th className="text-left px-4 py-3 font-medium">Email</th>
-                      {/* --- CHANGE 1: Add new table header. It shows all the time now, not just in edit mode --- */}
-                      <th className="text-left px-4 py-3 font-medium">Feedback Sheet URL</th>
-                      <th className="text-right px-4 py-3 font-medium">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {employees.map((emp) => (
-                      <tr key={emp.id} className="border-b last:border-0 hover:bg-muted/50">
-                        <td className="px-4 py-3">
-                          {editingEmployeeId === emp.id ? (
-                            <Input value={editFormData[emp.id]?.name || ""}
-                              onChange={(e) => updateInlineField(emp.id, "name", e.target.value)}
-                              className="h-8" />
-                          ) : (
-                            <Link to={`/admin/employees/${emp.id}`} className="font-medium text-primary hover:underline">
-                              {emp.name}
-                            </Link>
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          {editingEmployeeId === emp.id ? (
-                            <Input type="email" value={editFormData[emp.id]?.email || ""}
-                              onChange={(e) => updateInlineField(emp.id, "email", e.target.value)}
-                              className="h-8" />
-                          ) : (
-                            <span>{emp.email}</span>
-                          )}
-                        </td>
-                        {/* --- CHANGE 2: Add new table cell to display the URL --- */}
-                        <td className="px-4 py-3">
-                          {editingEmployeeId === emp.id ? (
-                            <Input type="url" value={editFormData[emp.id]?.feedback_sheet_url || ""}
-                              onChange={(e) => updateInlineField(emp.id, "feedback_sheet_url", e.target.value)}
-                              className="h-8" placeholder="https://..." />
-                          ) : (
-                            emp.feedback_sheet_url ? (
-                              <a href={emp.feedback_sheet_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-xs flex items-center gap-1">
-                                <Link2 className="h-3 w-3" />
-                                <span>Open Link</span>
-                              </a>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">Not Available</span>
-                            )
-                          )}
-                        </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-end gap-2">
-                            {isEditMode && (
-                              <>
-                                {editingEmployeeId === emp.id ? (
-                                  <>
-                                    <Button size="sm" variant="outline" onClick={() => cancelInlineEdit(emp.id)}> <X className="h-4 w-4" /></Button>
-                                    <Button size="sm" onClick={() => handleSaveInlineEdit(emp.id)} disabled={isUpdating}>
-                                      {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                                    </Button>
-                                  </>
-                                ) : (
-                                  <Button size="sm" variant="outline" onClick={() => startInlineEdit(emp)}><Edit className="h-4 w-4" /></Button>
-                                )}
-                              </>
-                            )}
-                            <Button size="sm" variant="outline" className="text-purple-600 border-purple-600" onClick={() => handleMakeAdmin(emp.email, emp.name)} disabled={isPromoting}><ShieldCheck className="h-4 w-4" /></Button>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="destructive" size="sm"><Trash2 className="h-4 w-4" /></Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
-                                  <AlertDialogDescription>This will permanently delete {emp.name}.</AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                  <AlertDialogAction onClick={() => handleDeleteEmployee(emp.id)} disabled={isDeleting} className="bg-destructive hover:bg-destructive/90">
-                                    {isDeleting ? "Deleting..." : "Delete"}
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </div>
-                        </td>
+            </CardHeader>
+            <CardContent>
+              {loading && (
+                <div className="flex justify-center items-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                  <span className="ml-2">Loading...</span>
+                </div>
+              )}
+              {error && <div className="text-red-600 p-4 rounded-md bg-red-50">{error}</div>}
+              {employees && (
+                <div className="overflow-x-auto rounded-md border mt-4"> {/* Added border and rounded-md */}
+                  <table className="w-full caption-bottom text-sm"> {/* Changed to shadcn/ui Table structure */}
+                    <caption className="sr-only">List of employees</caption>
+                    <thead className="[&_tr]:border-b"> {/* Uses shadcn/ui TableHead structure */}
+                      <tr className="bg-muted/40 transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted">
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 w-1/4">Name</th>
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 w-1/4">Email</th>
+                        <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 w-1/4">Feedback Sheet URL</th>
+                        <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 w-1/4">Actions</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            {employees && employees.length === 0 && <div className="text-center py-8 text-muted-foreground">No employees found.</div>}
-          </CardContent>
-        </Card>
+                    </thead>
+                    <tbody className="[&_tr:last-child]:border-0"> {/* Uses shadcn/ui TableBody structure */}
+                      {filteredEmployees.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
+                            No employees found matching your search.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        filteredEmployees.map((emp) => (
+                          <TableRow key={emp.id} className="border-b transition-colors hover:bg-muted/50">
+                            <TableCell className="p-4 align-middle [&:has([role=checkbox])]:pr-0">
+                              {editingEmployeeId === emp.id ? (
+                                <Input value={editFormData[emp.id]?.name || ""}
+                                  onChange={(e) => updateInlineField(emp.id, "name", e.target.value)}
+                                  className="h-8" />
+                              ) : (
+                                <Link to={`/admin/employees/${emp.id}`} className="font-medium text-primary hover:underline">
+                                  {emp.name}
+                                </Link>
+                              )}
+                            </TableCell>
+                            <TableCell className="p-4 align-middle [&:has([role=checkbox])]:pr-0">
+                              {editingEmployeeId === emp.id ? (
+                                <Input type="email" value={editFormData[emp.id]?.email || ""}
+                                  onChange={(e) => updateInlineField(emp.id, "email", e.target.value)}
+                                  className="h-8" />
+                              ) : (
+                                <span>{emp.email}</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="p-4 align-middle [&:has([role=checkbox])]:pr-0">
+                              {editingEmployeeId === emp.id ? (
+                                <Input type="url" value={editFormData[emp.id]?.feedback_sheet_url || ""}
+                                  onChange={(e) => updateInlineField(emp.id, "feedback_sheet_url", e.target.value)}
+                                  className="h-8" placeholder="https://..." />
+                              ) : (
+                                emp.feedback_sheet_url ? (
+                                  <a href={emp.feedback_sheet_url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-xs flex items-center gap-1">
+                                    <Link2 className="h-3 w-3" />
+                                    <span>Open Link</span>
+                                  </a>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">Not Available</span>
+                                )
+                              )}
+                            </TableCell>
+                            <TableCell className="p-4 align-middle [&:has([role=checkbox])]:pr-0">
+                              <div className="flex justify-end gap-2">
+                                {isEditMode && (
+                                  <>
+                                    {editingEmployeeId === emp.id ? (
+                                      <>
+                                        <Button size="sm" variant="outline" onClick={() => cancelInlineEdit(emp.id)}> <X className="h-4 w-4" /></Button>
+                                        <Button size="sm" onClick={() => handleSaveInlineEdit(emp.id)} disabled={isUpdating}>
+                                          {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                                        </Button>
+                                      </>
+                                    ) : (
+                                      <Button size="sm" variant="outline" onClick={() => startInlineEdit(emp)}><Edit className="h-4 w-4" /></Button>
+                                    )}
+                                  </>
+                                )}
+                                <Button size="sm" variant="outline" className="text-purple-600 border-purple-600" onClick={() => handleMakeAdmin(emp.email, emp.name)} disabled={isPromoting}><ShieldCheck className="h-4 w-4" /></Button>
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button variant="destructive" size="sm"><Trash2 className="h-4 w-4" /></Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent>
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                                      <AlertDialogDescription>This will permanently delete {emp.name}.</AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                      <AlertDialogAction onClick={() => handleDeleteEmployee(emp.id)} disabled={isDeleting} className="bg-destructive hover:bg-destructive/90">
+                                        {isDeleting ? "Deleting..." : "Delete"}
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
       </main>
     </div>
   );

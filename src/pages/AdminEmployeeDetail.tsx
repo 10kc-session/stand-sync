@@ -22,9 +22,10 @@ import {
     Quote,
     Lightbulb,
 } from "lucide-react";
-import { format, parseISO } from "date-fns";
+import { format } from "date-fns"; // Removed parseISO as it wasn't used directly for parsing input
 import { DateRange } from "react-day-picker";
 import { getFunctions, httpsCallable } from "firebase/functions";
+import { motion } from "framer-motion"; // Import motion for animations
 import {
     Chart as ChartJS,
     CategoryScale,
@@ -36,8 +37,8 @@ import {
     Tooltip,
     Legend,
 } from "chart.js";
-import { Bar, Line } from "react-chartjs-2";
 import ChartDataLabels from 'chartjs-plugin-datalabels';
+import { Line, Bar } from 'react-chartjs-2';
 
 // Register all necessary Chart.js components including the datalabels plugin
 ChartJS.register(
@@ -51,7 +52,6 @@ ChartJS.register(
     Legend,
     ChartDataLabels
 );
-
 
 // --- Type Definitions for data from the backend ---
 type SummaryGraphData = {
@@ -115,19 +115,14 @@ export default function AdminEmployeeDetail() {
                     timeFrame: activeFilter.mode,
                 };
 
-                // **THIS SECTION IS CORRECTED**
                 if (activeFilter.mode === 'monthly' && activeFilter.date) {
-                    // When sending a monthly filter, we must construct a date that represents
-                    // the first day of that month in the UTC timezone to prevent shifting.
                     params.date = new Date(Date.UTC(activeFilter.date.getFullYear(), activeFilter.date.getMonth(), 1)).toISOString();
                 } else if (activeFilter.mode === 'daily' || activeFilter.mode === 'specific') {
                     params.date = activeFilter.date?.toISOString();
                 } else if (activeFilter.mode === 'range' && activeFilter.dateRange?.from && activeFilter.dateRange?.to) {
-                    // Format to YYYY-MM-DD to strip local timezone info, which the backend will parse correctly.
                     params.startDate = format(activeFilter.dateRange.from, 'yyyy-MM-dd');
                     params.endDate = format(activeFilter.dateRange.to, 'yyyy-MM-dd');
                 }
-
 
                 const result = await getFeedbackSummary(params);
                 setSummary(result.data as FeedbackSummary);
@@ -254,8 +249,8 @@ export default function AdminEmployeeDetail() {
                         <CardContent className="space-y-4">
                             {summary.positiveFeedback?.length > 0 ? (
                                 summary.positiveFeedback.map((fb, index) => (
-                                    <div key={index} className="p-3 bg-gray-50 rounded-lg border">
-                                        <p className="italic text-gray-700 flex gap-2"><Quote className="h-4 w-4 text-gray-300 flex-shrink-0" /> {fb.quote}</p>
+                                    <div key={index} className="p-3 bg-secondary rounded-lg border border-border"> {/* Updated classes */}
+                                        <p className="italic text-foreground flex gap-2"><Quote className="h-4 w-4 text-muted-foreground flex-shrink-0" /> {fb.quote}</p> {/* Updated classes */}
                                         <div className="mt-2 flex flex-wrap gap-1">
                                             {fb.keywords?.map(kw => <Badge key={kw} variant="secondary">{kw}</Badge>)}
                                         </div>
@@ -269,9 +264,9 @@ export default function AdminEmployeeDetail() {
                         <CardContent className="space-y-4">
                             {summary.improvementAreas?.length > 0 ? (
                                 summary.improvementAreas.map((item, index) => (
-                                    <div key={index} className="p-3 bg-gray-50 rounded-lg border">
-                                        <p className="font-semibold text-gray-800">{item.theme}</p>
-                                        <p className="text-sm text-gray-600">{item.suggestion}</p>
+                                    <div key={index} className="p-3 bg-secondary rounded-lg border border-border"> {/* Updated classes */}
+                                        <p className="font-semibold text-foreground">{item.theme}</p> {/* Updated classes */}
+                                        <p className="text-sm text-muted-foreground">{item.suggestion}</p> {/* Updated classes */}
                                     </div>
                                 ))
                             ) : <p className="text-muted-foreground text-sm">No specific improvement areas found.</p>}
@@ -286,7 +281,13 @@ export default function AdminEmployeeDetail() {
         <div className="min-h-screen flex flex-col bg-background">
             <AppNavbar />
             <main className="flex-1 flex flex-col items-center py-10 px-4">
-                <div className="w-full max-w-6xl">
+                {/* Added motion.div for entrance animation */}
+                <motion.div
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.5 }}
+                    className="w-full max-w-6xl"
+                >
                     <div className="flex justify-between items-center mb-6">
                         <div>
                             <h1 className="text-3xl font-bold">Feedback Dashboard</h1>
@@ -313,7 +314,6 @@ export default function AdminEmployeeDetail() {
                                         {[2025, 2024, 2023].map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
                                     </SelectContent>
                                 </Select>
-                                {/* This now correctly sets the date for the monthly filter */}
                                 <Button onClick={() => setActiveFilter({ mode: 'monthly', date: new Date(selectedYear, selectedMonth, 1) })}>View Month</Button>
                             </div>
 
@@ -345,7 +345,7 @@ export default function AdminEmployeeDetail() {
                     </Card>
 
                     {renderContent()}
-                </div>
+                </motion.div>
             </main>
         </div>
     );

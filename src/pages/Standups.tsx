@@ -14,9 +14,17 @@ import {
 } from "firebase/firestore";
 
 // --- Component Imports ---
-import AppNavbar from "@/components/AppNavbar";
-import AdminScheduleStandup from "@/components/AdminScheduleStandup";
-import "./Attendance.css";
+import AppNavbar from "@/components/AppNavbar"; // RE-ADDED: AppNavbar is now included on this page
+import AdminScheduleStandup from "@/components/AdminScheduleStandup"; // Assuming this component is styled internally
+// import "./Attendance.css"; // REMOVED: Replaced with Tailwind/shadcn/ui styling
+
+import { Button } from "@/components/ui/button";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Loader2, CalendarPlus, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { motion } from "framer-motion";
+import { cn } from "@/lib/utils";
 
 // --- Type Definitions for Firestore ---
 type Employee = { id: string; name: string; email: string };
@@ -24,9 +32,7 @@ type Standup = { id: string; scheduled_at: Timestamp };
 type Attendance = { employee_id: string; status: string | null, standup_id: string };
 
 export default function Standups() {
-  // --- CHANGE 1: Add a new loading state for the initial page load ---
   const [isLoadingPage, setIsLoadingPage] = useState(true);
-
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [attendance, setAttendance] = useState<Record<string, Attendance>>({});
   const [standup, setStandup] = useState<Standup | null>(null);
@@ -36,7 +42,6 @@ export default function Standups() {
   const [editedAttendance, setEditedAttendance] = useState<Record<string, boolean>>({});
 
   const fetchData = useCallback(async () => {
-    // --- CHANGE 2: Ensure loading state is true at the start ---
     setIsLoadingPage(true);
     try {
       const employeesCollection = collection(db, "employees");
@@ -75,7 +80,7 @@ export default function Standups() {
         });
         setAttendance(map);
 
-        setStandupCompleted(attSnapshot.size === empData.length && attSnapshot.size > 0);
+        setStandupCompleted(attSnapshot.size === empData.length && empData.length > 0);
       } else {
         setStandup(null);
         setAttendance({});
@@ -85,7 +90,6 @@ export default function Standups() {
       console.error("Failed to fetch standup data:", error);
       // Handle error state if needed
     } finally {
-      // --- CHANGE 3: Set loading to false after all data fetching is done ---
       setIsLoadingPage(false);
     }
   }, []);
@@ -101,11 +105,11 @@ export default function Standups() {
   const handleStartStandup = () => {
     setStandupStarted(true);
     setEditing(true);
-    setEditedAttendance(
-      Object.fromEntries(
-        employees.map(emp => [emp.id, attendance[emp.id]?.status === "Present"])
-      )
-    );
+    const initialEditedAttendance: Record<string, boolean> = {};
+    employees.forEach(emp => {
+      initialEditedAttendance[emp.id] = attendance[emp.id]?.status === "Present";
+    });
+    setEditedAttendance(initialEditedAttendance);
   };
 
   const handleAttendanceCheck = (empId: string, checked: boolean) => {
@@ -132,159 +136,223 @@ export default function Standups() {
       batch.set(attendanceDocRef, dataToSet);
     }
 
-    await batch.commit();
-
-    await fetchData();
-    setStandupStarted(false);
-    setEditing(false);
-    setStandupCompleted(true);
+    try {
+      await batch.commit();
+      await fetchData();
+      setStandupStarted(false);
+      setEditing(false);
+      // setStandupCompleted is set by fetchData
+    } catch (error) {
+      console.error("Error saving attendance:", error);
+      // Handle error display
+    }
   };
 
   const renderContent = () => {
-    // --- CHANGE 4: Main rendering logic is now wrapped in a loading check ---
     if (isLoadingPage) {
       return (
-        <div className="text-center text-lg font-semibold text-muted-foreground p-10">
-          Loading...
+        <div className="flex justify-center items-center h-full min-h-[300px]">
+          <Loader2 className="h-10 w-10 animate-spin text-primary" />
         </div>
       );
     }
 
     // 1. No standup for today: Show ONLY schedule section
     if (!standup) {
-      return <AdminScheduleStandup onAfterSchedule={handleScheduleReload} />;
+      return (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-lg mx-auto"
+        >
+          {/* Assuming AdminScheduleStandup is designed to fit the minimalist theme */}
+          <AdminScheduleStandup onAfterSchedule={handleScheduleReload} />
+        </motion.div>
+      );
     }
 
-    // 2. Standup scheduled for today
+    // 2. Standup scheduled for today, but not started/completed
     if (standup && !standupStarted && !standupCompleted) {
       return (
-        <div className="card-style" style={{ maxWidth: 520, margin: "40px auto 0", textAlign: "center", padding: 32 }}>
-          <h2 style={{ marginBottom: 18 }}>Today's Standup</h2>
-          <div className="banner" style={{ background: "#e6f7ff", color: "#096", margin: "0 0 20px 0" }}>
-            Standup scheduled for today.
-          </div>
-          <button
-            className="btn-style py-2 px-7 text-lg rounded"
-            onClick={handleStartStandup}
-          >
-            Start Standup
-          </button>
-        </div>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-lg mx-auto"
+        >
+          <Card className="text-center p-6 shadow-lg">
+            <CardHeader>
+              <CardTitle className="text-2xl font-bold">Today's Standup</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Alert className="mb-6 bg-blue-50 border-blue-200 text-blue-700">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Standup Scheduled</AlertTitle>
+                <AlertDescription>
+                  A standup meeting is scheduled for today. Click below to start marking attendance.
+                </AlertDescription>
+              </Alert>
+              <Button
+                size="lg"
+                className="w-full font-bold"
+                onClick={handleStartStandup}
+              >
+                Start Standup <CalendarPlus className="ml-2 h-5 w-5" />
+              </Button>
+            </CardContent>
+          </Card>
+        </motion.div>
       );
     }
 
     // 3. Standup started: Show attendance editing using checkboxes
     if (standup && standupStarted && !standupCompleted) {
       return (
-        <div className="card-style" style={{ maxWidth: 520, margin: "40px auto 0" }}>
-          <h2 style={{ marginBottom: 16 }}>Mark Attendance</h2>
-          <div style={{ marginTop: 12, fontWeight: 600, color: "#267", marginBottom: 12 }}>People</div>
-          <ul style={{ paddingLeft: 0, margin: 0 }}>
-            {employees.map(emp => (
-              <li
-                key={emp.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  marginBottom: 12,
-                  fontWeight: 500,
-                  color: editedAttendance[emp.id] ? "#20af6e" : "#cb9620",
-                  fontSize: "1.025rem"
-                }}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-lg mx-auto"
+        >
+          <Card className="p-6 shadow-lg">
+            <CardHeader>
+              <CardTitle className="text-2xl font-bold mb-4">Mark Attendance</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm font-semibold text-muted-foreground mb-4">
+                Mark employees as Present or Missed.
+              </p>
+              {/* Added div for internal scrolling */}
+              <div className="max-h-[300px] overflow-y-auto pr-2">
+                <ul className="space-y-3">
+                  {employees.map(emp => (
+                    <li
+                      key={emp.id}
+                      className="flex items-center justify-between py-2 px-3 rounded-md transition-colors duration-200 hover:bg-muted/50"
+                    >
+                      <div className="flex items-center gap-3">
+                        <Checkbox
+                          id={`attendance-${emp.id}`}
+                          checked={!!editedAttendance[emp.id]}
+                          onCheckedChange={(checked) => handleAttendanceCheck(emp.id, checked as boolean)}
+                          disabled={!editing}
+                          className="data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground border-border"
+                        />
+                        <label
+                          htmlFor={`attendance-${emp.id}`}
+                          className={cn(
+                            "text-lg font-medium cursor-pointer peer-disabled:cursor-not-allowed peer-disabled:opacity-70",
+                            editedAttendance[emp.id] ? "text-green-700" : "text-orange-700"
+                          )}
+                        >
+                          {emp.name}
+                        </label>
+                      </div>
+                      <span className={cn(
+                        "text-sm font-semibold",
+                        editedAttendance[emp.id] ? "text-green-600" : "text-orange-600"
+                      )}>
+                        {editedAttendance[emp.id] ? "Present" : "Missed"}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div> {/* End of scrollable div */}
+              <Button
+                size="lg"
+                className="w-full mt-8"
+                onClick={handleStopStandup}
+                disabled={!editing}
               >
-                <input
-                  type="checkbox"
-                  checked={!!editedAttendance[emp.id]}
-                  onChange={e => handleAttendanceCheck(emp.id, e.target.checked)}
-                  disabled={!editing}
-                  style={{
-                    marginRight: 12,
-                    accentColor: "#20af6e",
-                    width: "20px",
-                    height: "20px",
-                    cursor: editing ? "pointer" : "default"
-                  }}
-                />
-                <span>{emp.name}</span>
-              </li>
-            ))}
-          </ul>
-          <button
-            className="btn-style"
-            style={{ marginTop: 30, background: "#18ae7a", color: "white", fontWeight: 700, fontSize: "1rem", padding: "10px 26px", borderRadius: 11 }}
-            onClick={handleStopStandup}
-          >
-            Stop
-          </button>
-        </div>
+                Stop Standup
+              </Button>
+            </CardContent>
+          </Card>
+        </motion.div>
       );
     }
 
     // 4. Standup completed: Show who attended (checkbox, disabled)
     if (standup && standupCompleted) {
       return (
-        <div className="card-style" style={{ maxWidth: 520, margin: "30px auto 0" }}>
-          <h1 style={{ marginBottom: 13 }}>Team Standups</h1>
-          <div className="banner" style={{ color: "#088", marginTop: 0, background: "linear-gradient(90deg,#eefff9 0%,#e8f5fa 80%)" }}>
-            Standup completed for today!
-          </div>
-          <div style={{ marginTop: 18, color: "#238", fontWeight: 400, fontSize: "1.04rem" }}>
-            See who joined today's standup and stay connected. Checkmarks show who attended.
-          </div>
-          <div style={{ marginTop: 30 }}>
-            <div style={{ fontWeight: 600, color: "#267", marginBottom: 10, fontSize: "1.08rem" }}>People</div>
-            <div>
-              <ul style={{ paddingLeft: 0, margin: 0 }}>
-                {employees.map(emp => {
-                  const present = attendance[emp.id]?.status === "Present";
-                  return (
-                    <li
-                      key={emp.id}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        marginBottom: 9,
-                        fontWeight: 500,
-                        color: present ? "#20af6e" : "#cb9620",
-                        fontSize: "1.025rem"
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={present}
-                        readOnly
-                        disabled
-                        style={{
-                          marginRight: 12,
-                          accentColor: present ? "#11b26b" : "#beae6c",
-                          width: "18px",
-                          height: "18px",
-                          cursor: "default"
-                        }}
-                      />
-                      <span>{emp.name}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-            <div className="banner" style={{ background: "#e5ffe5", color: "#159f46", marginTop: 16 }}>
-              Standup completed!
-            </div>
-          </div>
-        </div>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-lg mx-auto"
+        >
+          <Card className="p-6 shadow-lg">
+            <CardHeader>
+              <CardTitle className="text-2xl font-bold mb-4">Team Standups</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Alert className="mb-6 bg-green-50 border-green-200 text-green-700">
+                <CheckCircle2 className="h-4 w-4" />
+                <AlertTitle>Standup Completed!</AlertTitle>
+                <AlertDescription>
+                  Today's standup has concluded. See who joined below.
+                </AlertDescription>
+              </Alert>
+              <p className="text-sm text-muted-foreground mb-4">
+                Checkmarks show who attended today's standup.
+              </p>
+              {/* Added div for internal scrolling */}
+              <div className="max-h-[300px] overflow-y-auto pr-2">
+                <p className="text-lg font-semibold text-foreground mb-3">People</p>
+                <ul className="space-y-3">
+                  {employees.map(emp => {
+                    const present = attendance[emp.id]?.status === "Present";
+                    return (
+                      <li
+                        key={emp.id}
+                        className="flex items-center justify-between py-2 px-3 rounded-md"
+                      >
+                        <div className="flex items-center gap-3">
+                          <Checkbox
+                            id={`attendance-view-${emp.id}`}
+                            checked={present}
+                            disabled
+                            className="data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground border-border"
+                          />
+                          <label
+                            htmlFor={`attendance-view-${emp.id}`}
+                            className={cn(
+                              "text-lg font-medium",
+                              present ? "text-green-700" : "text-orange-700",
+                              "peer-disabled:opacity-70"
+                            )}
+                          >
+                            {emp.name}
+                          </label>
+                        </div>
+                        <span className={cn(
+                          "text-sm font-semibold",
+                          present ? "text-green-600" : "text-orange-600"
+                        )}>
+                          {present ? "Present" : "Missed"}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div> {/* End of scrollable div */}
+            </CardContent>
+          </Card>
+        </motion.div>
       );
     }
 
-    // Fallback case, though it should ideally not be reached
-    return null;
-  }
+    return null; // Fallback case
+  };
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "linear-gradient(120deg, #e6eafc 0%, #c8eafc 50%, #f1f4f9 100%)" }}>
+    // Updated main container for minimalist background
+    <div className="min-h-screen flex flex-col bg-background">
+      {/* AppNavbar is included here as per your request */}
       <AppNavbar />
-      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ width: "100%", maxWidth: 620 }}>
+      <div className="flex-1 flex items-center justify-center p-4">
+        <div className="w-full max-w-2xl"> {/* Adjusted max-width for overall page content */}
           {renderContent()}
         </div>
       </div>
