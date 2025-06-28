@@ -19,11 +19,11 @@ This project was successfully migrated from a Supabase backend to a robust, scal
 - **Central Admin Dashboard (/admin)**: A hub showing a summary of the day's standup and a real-time attendance count.
 - **Secure Role-Based Access**: The admin system is protected by Firebase Custom Claims. Only authorized users can access admin functionality.
 - **Employee Management (/admin/employees)**:
-  - *View All Users*: Admins can see a full list of all registered employees who have completed their profile setup.
-  - *Search*: A real-time search bar allows admins to instantly filter employees by name, email, or Employee ID.
-  - *Edit Employee Details*: Admins can enter an "Edit Mode" to perform inline updates to any employee's name, email, Employee ID, or assigned Feedback Sheet URL.
-  - *Delete Employee*: Securely delete employee records from Firestore with a confirmation dialog.
-  - *Promote to Admin*: An existing admin can securely promote any other registered user to an admin role via a protected Cloud Function.
+  - ***View All Users***: Admins can see a full list of all registered employees who have completed their profile setup.
+  - ***Search***: A real-time search bar allows admins to instantly filter employees by name, email, or Employee ID.
+  - ***Edit Employee Details***: Admins can enter an "Edit Mode" to perform inline updates to any employee's name, email, Employee ID, or assigned Feedback Sheet URL.
+  - ***Delete Employee***: Securely delete employee records from Firestore with a confirmation dialog.
+  - ***Promote to Admin***: An existing admin can securely promote any other registered user to an admin role via a protected Cloud Function.
 - **Standup & Attendance Control (/standups & /attendance)**:
   - Admins can schedule the time for the day's standup.
   - They can initiate the real-time attendance tracking session.
@@ -151,6 +151,7 @@ cd stand-sync
   cd ..
   ```
 - Set API Key & Service Account Secrets:
+  
   a. Get a Gemini API key from Google AI Studio  
   b. Create a dedicated Service Account in Google Cloud with the Editor role and download its JSON key file  
   c. Run these commands from the project root:
@@ -171,6 +172,7 @@ cd stand-sync
   firebase deploy --only functions
   ```
 - Create Your First Admin:
+  
   a. Sign up for a new account in your running application  
   b. Complete the new user setup process on the `/setup-profile` page  
   c. Create a `set-admin.cjs` file in the project root as described in our development process  
