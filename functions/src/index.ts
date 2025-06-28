@@ -308,10 +308,17 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
             }
             graphTimeseries = { labels: labels, understanding: understandingValues, instructor: instructorValues };
 
+            // Find this part of your function...
         } else if (request.data.timeFrame === "full") {
-            const monthlyAggregates = new Map<number, { sumU: number; sumI: number; count: number }>();
+            // --- MODIFICATION START ---
+
+            // The Map key is now a string (e.g., "2025-06") instead of a number.
+            const monthlyAggregates = new Map<string, { sumU: number; sumI: number; count: number }>();
+
             filtered.forEach(row => {
-                const monthKey = row.date.getMonth(); // 0-11
+                // The key now includes the YEAR and the MONTH for correct chronological sorting.
+                const monthKey = format(row.date, 'yyyy-MM');
+
                 if (!monthlyAggregates.has(monthKey)) {
                     monthlyAggregates.set(monthKey, { sumU: 0, sumI: 0, count: 0 });
                 }
@@ -321,7 +328,8 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
                 monthStats.count += 1;
             });
 
-            const sortedMonthKeys = Array.from(monthlyAggregates.keys()).sort((a, b) => a - b);
+            // A simple string sort is now chronologically correct (e.g., "2024-12" comes before "2025-01").
+            const sortedMonthKeys = Array.from(monthlyAggregates.keys()).sort();
 
             const labels: string[] = [];
             const understandingValues: number[] = [];
@@ -329,11 +337,18 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
 
             for (const monthKey of sortedMonthKeys) {
                 const monthStats = monthlyAggregates.get(monthKey)!;
-                labels.push(format(new Date(0, monthKey), "MMM"));
+
+                // We parse the key back to a date to format it nicely for the chart label.
+                // This will produce labels like "Dec 2024", "Jan 2025", etc.
+                const labelDate = parse(monthKey, 'yyyy-MM', new Date());
+                labels.push(format(labelDate, "MMM yyyy"));
+
                 understandingValues.push(parseFloat((monthStats.sumU / monthStats.count).toFixed(2)));
                 instructorValues.push(parseFloat((monthStats.sumI / monthStats.count).toFixed(2)));
             }
             graphTimeseries = { labels: labels, understanding: understandingValues, instructor: instructorValues };
+
+            // --- MODIFICATION END ---
         } else {
             graphTimeseries = null;
         }
