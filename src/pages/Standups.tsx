@@ -1,153 +1,317 @@
-import React, { useEffect, useState, useCallback } from "react";
+// src/pages/Standups.tsx
+
+import { useEffect, useState, useCallback } from "react";
+import { format, setHours, setMinutes } from "date-fns"; // Added setHours, setMinutes
+
 // --- Firebase Imports ---
 import { db } from "@/integrations/firebase/client";
 import {
+  doc,
+  onSnapshot,
+  setDoc,
+  updateDoc,
+  serverTimestamp,
+  Timestamp,
   collection,
   query,
-  where,
   getDocs,
-  orderBy,
-  limit,
-  Timestamp,
-  doc,
-  writeBatch,
+  where,
+  writeBatch, // <-- Add this import
 } from "firebase/firestore";
 
+// --- Context and Auth Hooks ---
+import { useUserAuth } from "@/context/UserAuthContext";
+import { useAdminAuth } from "@/context/AdminAuthContext";
+
 // --- Component Imports ---
-import AppNavbar from "@/components/AppNavbar"; // RE-ADDED: AppNavbar is now included on this page
-import AdminScheduleStandup from "@/components/AdminScheduleStandup"; // Assuming this component is styled internally
-// import "./Attendance.css"; // REMOVED: Replaced with Tailwind/shadcn/ui styling
-
+import AppNavbar from "@/components/AppNavbar";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox"; // Added Checkbox
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, CalendarPlus, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Loader2, CalendarClock, PlayCircle, StopCircle, CheckCircle2, AlertTriangle, CalendarIcon } from "lucide-react";
 import { motion } from "framer-motion";
-import { cn } from "@/lib/utils";
+import { useToast } from "@/components/ui/use-toast";
+import { cn } from "@/lib/utils"; // For combining tailwind classes
 
-// --- Type Definitions for Firestore ---
+// --- Shadcn UI for Date/Time Picker ---
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { Input } from "@/components/ui/input"; // For time input
+
+// --- Type Definition for our Standup document ---
+type Standup = {
+  status: "scheduled" | "active" | "ended";
+  scheduledTime: Timestamp;
+  startedAt?: Timestamp;
+  endedAt?: Timestamp;
+  scheduledBy: string; // UID of the admin
+  // Optionally, you could store a list of attendees or a summary here
+  // But for detailed attendance, a separate collection is better.
+};
+
+// --- Type Definitions for Employees and Attendance ---
 type Employee = { id: string; name: string; email: string };
-type Standup = { id: string; scheduled_at: Timestamp };
-type Attendance = { employee_id: string; status: string | null, standup_id: string };
+type AttendanceRecord = { employee_id: string; status: "Present" | "Missed"; standup_id: string; scheduled_at: Timestamp };
+
+// --- Schedule Standup Form Component ---
+const ScheduleStandupForm = ({
+  todayDocId,
+  adminName,
+}: {
+  todayDocId: string;
+  adminName: string;
+}) => {
+  const { toast } = useToast();
+  const [isScheduling, setIsScheduling] = useState(false);
+  const [scheduledDate, setScheduledDate] = useState<Date | undefined>(new Date());
+  const [scheduledTimeInput, setScheduledTimeInput] = useState<string>(format(new Date(), 'HH:mm')); // HH:mm for 24-hour format
+
+  const handleSchedule = async () => {
+    if (!scheduledDate) {
+      toast({ title: "Error", description: "Please select a date.", variant: "destructive" });
+      return;
+    }
+
+    const [hours, minutes] = scheduledTimeInput.split(':').map(Number);
+    if (isNaN(hours) || isNaN(minutes) || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+      toast({ title: "Error", description: "Please enter a valid time (HH:MM).", variant: "destructive" });
+      return;
+    }
+
+    let finalScheduledDateTime = setHours(setMinutes(scheduledDate, minutes), hours);
+
+    // If the scheduled date is today, ensure the time is not in the past
+    const now = new Date();
+    const todayFormatted = format(now, "yyyy-MM-dd");
+    const selectedDateFormatted = format(finalScheduledDateTime, "yyyy-MM-dd");
+
+    if (selectedDateFormatted === todayFormatted && finalScheduledDateTime.getTime() < now.getTime()) {
+      toast({ title: "Error", description: "Scheduled time cannot be in the past for today's standup.", variant: "destructive" });
+      return;
+    }
+
+
+    setIsScheduling(true);
+    try {
+      const standupRef = doc(db, "standups", todayDocId);
+      await setDoc(standupRef, {
+        status: "scheduled",
+        scheduledTime: Timestamp.fromDate(finalScheduledDateTime), // Use selected time
+        scheduledBy: adminName,
+      });
+      toast({ title: "Success", description: `Standup has been scheduled for today at ${format(finalScheduledDateTime, 'p')}.` });
+    } catch (error) {
+      console.error("Error scheduling standup:", error);
+      toast({ title: "Error", description: "Could not schedule standup.", variant: "destructive" });
+    } finally {
+      setIsScheduling(false);
+    }
+  };
+
+  return (
+    <Card className="text-center p-6 shadow-lg">
+      <CardHeader>
+        <CardTitle className="text-2xl font-bold">No Standup Today</CardTitle>
+        <CardDescription className="text-muted-foreground">
+          There is no standup scheduled for today. Schedule one now.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col items-center space-y-4">
+        {/* Date Picker */}
+        <Popover>
+          <PopoverTrigger asChild>
+            <Button
+              variant={"outline"}
+              className={cn(
+                "w-[280px] justify-start text-left font-normal",
+                !scheduledDate && "text-muted-foreground"
+              )}
+            >
+              <CalendarIcon className="mr-2 h-4 w-4" />
+              {scheduledDate ? format(scheduledDate, "PPP") : <span>Pick a date</span>}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent className="w-auto p-0">
+            <Calendar
+              mode="single"
+              selected={scheduledDate}
+              onSelect={setScheduledDate}
+              initialFocus
+              disabled={(date) => date < new Date() && format(date, 'yyyy-MM-dd') !== format(new Date(), 'yyyy-MM-dd')} // Disable past dates, allow today
+            />
+          </PopoverContent>
+        </Popover>
+
+        {/* Time Input */}
+        <div className="flex items-center gap-2">
+          <Input
+            type="time"
+            value={scheduledTimeInput}
+            onChange={(e) => setScheduledTimeInput(e.target.value)}
+            className="w-[120px]"
+          />
+        </div>
+
+        <Button onClick={handleSchedule} disabled={isScheduling || !scheduledDate}>
+          {isScheduling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CalendarClock className="mr-2 h-4 w-4" />}
+          Schedule Standup
+        </Button>
+      </CardContent>
+    </Card>
+  );
+};
 
 export default function Standups() {
-  const [isLoadingPage, setIsLoadingPage] = useState(true);
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [attendance, setAttendance] = useState<Record<string, Attendance>>({});
-  const [standup, setStandup] = useState<Standup | null>(null);
-  const [standupCompleted, setStandupCompleted] = useState(false);
-  const [standupStarted, setStandupStarted] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [editedAttendance, setEditedAttendance] = useState<Record<string, boolean>>({});
+  const { user } = useUserAuth();
+  const { admin } = useAdminAuth(); // This hook should return `true` if the user is an admin
+  const { toast } = useToast();
 
-  const fetchData = useCallback(async () => {
+  const [isLoadingPage, setIsLoadingPage] = useState(true); // For initial page load
+  const [standup, setStandup] = useState<Standup | null>(null);
+  const [isUpdatingStandupStatus, setIsUpdatingStandupStatus] = useState(false); // For start/stop buttons
+
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [tempAttendance, setTempAttendance] = useState<Record<string, boolean>>({}); // For marking attendance during active standup
+  const [savedAttendance, setSavedAttendance] = useState<Record<string, AttendanceRecord>>({}); // For displaying once ended
+
+  // Get today's date in 'YYYY-MM-DD' format to use as our document ID
+  const todayDocId = format(new Date(), "yyyy-MM-dd");
+
+  // --- Real-time Listener for Standup Document ---
+  useEffect(() => {
+    const standupRef = doc(db, "standups", todayDocId);
+
+    const unsubscribe = onSnapshot(
+      standupRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setStandup(docSnap.data() as Standup);
+        } else {
+          setStandup(null);
+        }
+        setIsLoadingPage(false);
+      },
+      (error) => {
+        console.error("Failed to listen to standup document:", error);
+        toast({ title: "Error", description: "Could not connect to standup service.", variant: "destructive" });
+        setIsLoadingPage(false);
+      }
+    );
+
+    return () => unsubscribe(); // Cleanup listener on unmount
+  }, [todayDocId, toast]);
+
+  // --- Fetch Employees and Attendance (if standup is ended) ---
+  const fetchEmployeesAndAttendance = useCallback(async () => {
     setIsLoadingPage(true);
     try {
+      // Fetch Employees
       const employeesCollection = collection(db, "employees");
       const empSnapshot = await getDocs(employeesCollection);
-      const empData = empSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Employee[];
+      const empData = empSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })) as Employee[];
       setEmployees(empData);
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-
-      const standupsCollection = collection(db, "standups");
-      const q = query(
-        standupsCollection,
-        where("scheduled_at", ">=", Timestamp.fromDate(today)),
-        where("scheduled_at", "<", Timestamp.fromDate(tomorrow)),
-        orderBy("scheduled_at", "desc"),
-        limit(1)
-      );
-
-      const standupSnapshot = await getDocs(q);
-      if (!standupSnapshot.empty) {
-        const standupDoc = standupSnapshot.docs[0];
-        const standupData = { id: standupDoc.id, ...standupDoc.data() } as Standup;
-        setStandup(standupData);
-
+      // If a standup exists and is ended, fetch its attendance
+      if (standup && standup.status === "ended") {
         const attendanceCollection = collection(db, "attendance");
-        const attendanceQuery = query(attendanceCollection, where("standup_id", "==", standupData.id));
-        const attSnapshot = await getDocs(attendanceQuery);
-
-        const map: Record<string, Attendance> = {};
+        // Query for attendance records related to today's standup
+        const q = query(attendanceCollection, where("standup_id", "==", todayDocId));
+        const attSnapshot = await getDocs(q);
+        const fetchedAttendance: Record<string, AttendanceRecord> = {};
         attSnapshot.forEach((doc) => {
-          const attDoc = doc.data() as Attendance;
-          map[attDoc.employee_id] = attDoc;
+          const data = doc.data() as AttendanceRecord;
+          fetchedAttendance[data.employee_id] = data;
         });
-        setAttendance(map);
-
-        setStandupCompleted(attSnapshot.size === empData.length && empData.length > 0);
+        setSavedAttendance(fetchedAttendance);
       } else {
-        setStandup(null);
-        setAttendance({});
-        setStandupCompleted(false);
+        setSavedAttendance({}); // Clear saved attendance if standup is not ended
       }
     } catch (error) {
-      console.error("Failed to fetch standup data:", error);
-      // Handle error state if needed
+      console.error("Error fetching employees or attendance:", error);
+      toast({ title: "Error", description: "Failed to load employee data.", variant: "destructive" });
     } finally {
       setIsLoadingPage(false);
     }
-  }, []);
+  }, [standup, todayDocId, toast]);
 
+  // Call fetchEmployeesAndAttendance when standup status or component mounts
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchEmployeesAndAttendance();
+  }, [fetchEmployeesAndAttendance]); // Depend on memoized function
 
-  const handleScheduleReload = () => {
-    fetchData();
-  };
 
-  const handleStartStandup = () => {
-    setStandupStarted(true);
-    setEditing(true);
-    const initialEditedAttendance: Record<string, boolean> = {};
+  // --- Admin Action Handlers ---
+  const handleStartStandup = async () => {
+    setIsUpdatingStandupStatus(true);
+    const standupRef = doc(db, "standups", todayDocId);
+
+    // Initialize tempAttendance for all employees (default to Missed)
+    const initialTempAttendance: Record<string, boolean> = {};
     employees.forEach(emp => {
-      initialEditedAttendance[emp.id] = attendance[emp.id]?.status === "Present";
+      initialTempAttendance[emp.id] = false; // Default to missed
     });
-    setEditedAttendance(initialEditedAttendance);
+    setTempAttendance(initialTempAttendance);
+
+    try {
+      await updateDoc(standupRef, {
+        status: "active",
+        startedAt: serverTimestamp(),
+      });
+      toast({ title: "Standup Started", description: "The standup is now active. Mark attendance." });
+    } catch (error) {
+      console.error("Error starting standup:", error);
+      toast({ title: "Error", description: "Could not start the standup.", variant: "destructive" });
+    } finally {
+      setIsUpdatingStandupStatus(false);
+    }
   };
 
   const handleAttendanceCheck = (empId: string, checked: boolean) => {
-    setEditedAttendance(prev => ({ ...prev, [empId]: checked }));
+    setTempAttendance((prev) => ({ ...prev, [empId]: checked }));
   };
 
   const handleStopStandup = async () => {
     if (!standup) return;
 
-    const batch = writeBatch(db);
-
-    for (const emp of employees) {
-      const empStatus = editedAttendance[emp.id] ? "Present" : "Missed";
-      const attendanceDocId = `${standup.id}_${emp.id}`;
-      const attendanceDocRef = doc(db, "attendance", attendanceDocId);
-
-      const dataToSet = {
-        standup_id: standup.id,
-        employee_id: emp.id,
-        status: empStatus,
-        scheduled_at: standup.scheduled_at
-      };
-
-      batch.set(attendanceDocRef, dataToSet);
-    }
-
+    setIsUpdatingStandupStatus(true);
     try {
+      const batch = writeBatch(db);
+      const attendanceCollectionRef = collection(db, "attendance");
+
+      for (const emp of employees) {
+        const attendanceStatus = tempAttendance[emp.id] ? "Present" : "Missed";
+        // Create a unique ID for each attendance record using standup ID and employee ID
+        const attendanceDocRef = doc(attendanceCollectionRef, `${todayDocId}_${emp.id}`);
+        batch.set(attendanceDocRef, {
+          standup_id: todayDocId,
+          employee_id: emp.id,
+          status: attendanceStatus,
+          scheduled_at: standup.scheduledTime, // Store the scheduled time with attendance
+          markedAt: serverTimestamp(), // When this specific record was marked
+        });
+      }
       await batch.commit();
-      await fetchData();
-      setStandupStarted(false);
-      setEditing(false);
-      // setStandupCompleted is set by fetchData
+
+      // 2. Update Standup Status to 'ended'
+      const standupRef = doc(db, "standups", todayDocId);
+      await updateDoc(standupRef, {
+        status: "ended",
+        endedAt: serverTimestamp(),
+      });
+
+      toast({ title: "Standup Ended", description: "The standup has been concluded and attendance saved." });
+      // Re-fetch data to reflect the new "ended" state and display saved attendance
+      await fetchEmployeesAndAttendance();
     } catch (error) {
-      console.error("Error saving attendance:", error);
-      // Handle error display
+      console.error("Error ending standup or saving attendance:", error);
+      toast({ title: "Error", description: "Could not end the standup or save attendance.", variant: "destructive" });
+    } finally {
+      setIsUpdatingStandupStatus(false);
     }
   };
 
+  // --- Main Render Logic ---
   const renderContent = () => {
     if (isLoadingPage) {
       return (
@@ -157,23 +321,37 @@ export default function Standups() {
       );
     }
 
-    // 1. No standup for today: Show ONLY schedule section
+    // 1. No standup for today: Show scheduling form only to admins, alert to users
     if (!standup) {
-      return (
+      return admin ? (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
           className="w-full max-w-lg mx-auto"
         >
-          {/* Assuming AdminScheduleStandup is designed to fit the minimalist theme */}
-          <AdminScheduleStandup onAfterSchedule={handleScheduleReload} />
+          <ScheduleStandupForm todayDocId={todayDocId} adminName={user?.displayName || "Admin"} />
+        </motion.div>
+      ) : (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="w-full max-w-lg mx-auto"
+        >
+          <Alert variant="default" className="border-yellow-300 bg-yellow-50">
+            <AlertTriangle className="h-4 w-4 text-yellow-600" />
+            <AlertTitle className="text-yellow-800">No Standup Scheduled</AlertTitle>
+            <AlertDescription className="text-yellow-700">
+              There is no standup scheduled for today. Please check back later.
+            </AlertDescription>
+          </Alert>
         </motion.div>
       );
     }
 
-    // 2. Standup scheduled for today, but not started/completed
-    if (standup && !standupStarted && !standupCompleted) {
+    // 2. Standup is Scheduled (but not active/ended)
+    if (standup.status === "scheduled") {
       return (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -190,24 +368,24 @@ export default function Standups() {
                 <AlertTriangle className="h-4 w-4" />
                 <AlertTitle>Standup Scheduled</AlertTitle>
                 <AlertDescription>
-                  A standup meeting is scheduled for today. Click below to start marking attendance.
+                  A standup meeting is scheduled for today at {format(standup.scheduledTime.toDate(), 'p')}.
+                  {admin && " Click below to start marking attendance."}
                 </AlertDescription>
               </Alert>
-              <Button
-                size="lg"
-                className="w-full font-bold"
-                onClick={handleStartStandup}
-              >
-                Start Standup <CalendarPlus className="ml-2 h-5 w-5" />
-              </Button>
+              {admin && (
+                <Button size="lg" className="w-full font-bold" onClick={handleStartStandup} disabled={isUpdatingStandupStatus}>
+                  {isUpdatingStandupStatus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <PlayCircle className="mr-2 h-5 w-5" />}
+                  Start Standup
+                </Button>
+              )}
             </CardContent>
           </Card>
         </motion.div>
       );
     }
 
-    // 3. Standup started: Show attendance editing using checkboxes
-    if (standup && standupStarted && !standupCompleted) {
+    // 3. Standup is Active: Show attendance marking for admins, status for users
+    if (standup.status === "active") {
       return (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -217,64 +395,85 @@ export default function Standups() {
         >
           <Card className="p-6 shadow-lg">
             <CardHeader>
-              <CardTitle className="text-2xl font-bold mb-4">Mark Attendance</CardTitle>
+              <CardTitle className="text-2xl font-bold mb-4">
+                {admin ? "Mark Attendance" : "Standup is LIVE"}
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-sm font-semibold text-muted-foreground mb-4">
-                Mark employees as Present or Missed.
-              </p>
-              {/* Added div for internal scrolling */}
-              <div className="max-h-[300px] overflow-y-auto pr-2">
-                <ul className="space-y-3">
-                  {employees.map(emp => (
-                    <li
-                      key={emp.id}
-                      className="flex items-center justify-between py-2 px-3 rounded-md transition-colors duration-200 hover:bg-muted/50"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Checkbox
-                          id={`attendance-${emp.id}`}
-                          checked={!!editedAttendance[emp.id]}
-                          onCheckedChange={(checked) => handleAttendanceCheck(emp.id, checked as boolean)}
-                          disabled={!editing}
-                          className="data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground border-border"
-                        />
-                        <label
-                          htmlFor={`attendance-${emp.id}`}
-                          className={cn(
-                            "text-lg font-medium cursor-pointer peer-disabled:cursor-not-allowed peer-disabled:opacity-70",
-                            editedAttendance[emp.id] ? "text-green-700" : "text-orange-700"
-                          )}
+              <Alert className="mb-6 bg-red-50 border-red-200 text-red-700">
+                <PlayCircle className="h-4 w-4" />
+                <AlertTitle className="text-red-800">Standup is LIVE!</AlertTitle>
+                <AlertDescription className="text-red-700">
+                  The standup is currently active.
+                </AlertDescription>
+              </Alert>
+
+              {admin && (
+                <>
+                  <p className="text-sm font-semibold text-muted-foreground mb-4">
+                    Mark employees as Present or Missed.
+                  </p>
+                  <div className="max-h-[300px] overflow-y-auto pr-2 mb-4">
+                    <ul className="space-y-3">
+                      {employees.map((emp) => (
+                        <li
+                          key={emp.id}
+                          className="flex items-center justify-between py-2 px-3 rounded-md transition-colors duration-200 hover:bg-muted/50"
                         >
-                          {emp.name}
-                        </label>
-                      </div>
-                      <span className={cn(
-                        "text-sm font-semibold",
-                        editedAttendance[emp.id] ? "text-green-600" : "text-orange-600"
-                      )}>
-                        {editedAttendance[emp.id] ? "Present" : "Missed"}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div> {/* End of scrollable div */}
-              <Button
-                size="lg"
-                className="w-full mt-8"
-                onClick={handleStopStandup}
-                disabled={!editing}
-              >
-                Stop Standup
-              </Button>
+                          <div className="flex items-center gap-3">
+                            <Checkbox
+                              id={`attendance-${emp.id}`}
+                              checked={!!tempAttendance[emp.id]}
+                              onCheckedChange={(checked) => handleAttendanceCheck(emp.id, checked as boolean)}
+                              disabled={isUpdatingStandupStatus}
+                              className="data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground border-border"
+                            />
+                            <label
+                              htmlFor={`attendance-${emp.id}`}
+                              className={cn(
+                                "text-lg font-medium cursor-pointer peer-disabled:cursor-not-allowed peer-disabled:opacity-70",
+                                tempAttendance[emp.id] ? "text-green-700" : "text-orange-700"
+                              )}
+                            >
+                              {emp.name}
+                            </label>
+                          </div>
+                          <span
+                            className={cn(
+                              "text-sm font-semibold",
+                              tempAttendance[emp.id] ? "text-green-600" : "text-orange-600"
+                            )}
+                          >
+                            {tempAttendance[emp.id] ? "Present" : "Missed"}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <Button
+                    size="lg"
+                    className="w-full"
+                    onClick={handleStopStandup}
+                    disabled={isUpdatingStandupStatus}
+                  >
+                    {isUpdatingStandupStatus ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <StopCircle className="mr-2 h-5 w-5" />}
+                    Stop Standup
+                  </Button>
+                </>
+              )}
+              {!admin && (
+                <p className="text-muted-foreground text-center mt-4">
+                  The standup is ongoing. The attendance is being marked by an admin.
+                </p>
+              )}
             </CardContent>
           </Card>
         </motion.div>
       );
     }
 
-    // 4. Standup completed: Show who attended (checkbox, disabled)
-    if (standup && standupCompleted) {
+    // 4. Standup is Ended: Show who attended for both admins and users
+    if (standup.status === "ended") {
       return (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -291,68 +490,71 @@ export default function Standups() {
                 <CheckCircle2 className="h-4 w-4" />
                 <AlertTitle>Standup Completed!</AlertTitle>
                 <AlertDescription>
-                  Today's standup has concluded. See who joined below.
+                  Today's standup concluded at {standup.endedAt ? format(standup.endedAt.toDate(), 'p') : 'an unknown time'}. See who joined below.
                 </AlertDescription>
               </Alert>
               <p className="text-sm text-muted-foreground mb-4">
                 Checkmarks show who attended today's standup.
               </p>
-              {/* Added div for internal scrolling */}
               <div className="max-h-[300px] overflow-y-auto pr-2">
                 <p className="text-lg font-semibold text-foreground mb-3">People</p>
                 <ul className="space-y-3">
-                  {employees.map(emp => {
-                    const present = attendance[emp.id]?.status === "Present";
-                    return (
-                      <li
-                        key={emp.id}
-                        className="flex items-center justify-between py-2 px-3 rounded-md"
-                      >
-                        <div className="flex items-center gap-3">
-                          <Checkbox
-                            id={`attendance-view-${emp.id}`}
-                            checked={present}
-                            disabled
-                            className="data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground border-border"
-                          />
-                          <label
-                            htmlFor={`attendance-view-${emp.id}`}
+                  {employees.length > 0 ? (
+                    employees.map((emp) => {
+                      const present = savedAttendance[emp.id]?.status === "Present";
+                      return (
+                        <li
+                          key={emp.id}
+                          className="flex items-center justify-between py-2 px-3 rounded-md"
+                        >
+                          <div className="flex items-center gap-3">
+                            <Checkbox
+                              id={`attendance-view-${emp.id}`}
+                              checked={present}
+                              disabled // Always disabled in view mode
+                              className="data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground border-border"
+                            />
+                            <label
+                              htmlFor={`attendance-view-${emp.id}`}
+                              className={cn(
+                                "text-lg font-medium",
+                                present ? "text-green-700" : "text-orange-700",
+                                "peer-disabled:opacity-70"
+                              )}
+                            >
+                              {emp.name}
+                            </label>
+                          </div>
+                          <span
                             className={cn(
-                              "text-lg font-medium",
-                              present ? "text-green-700" : "text-orange-700",
-                              "peer-disabled:opacity-70"
+                              "text-sm font-semibold",
+                              present ? "text-green-600" : "text-orange-600"
                             )}
                           >
-                            {emp.name}
-                          </label>
-                        </div>
-                        <span className={cn(
-                          "text-sm font-semibold",
-                          present ? "text-green-600" : "text-orange-600"
-                        )}>
-                          {present ? "Present" : "Missed"}
-                        </span>
-                      </li>
-                    );
-                  })}
+                            {present ? "Present" : "Missed"}
+                          </span>
+                        </li>
+                      );
+                    })
+                  ) : (
+                    <p className="text-center text-muted-foreground">No employees found or attendance recorded.</p>
+                  )}
                 </ul>
-              </div> {/* End of scrollable div */}
+              </div>
             </CardContent>
           </Card>
         </motion.div>
       );
     }
 
-    return null; // Fallback case
+    return null; // Fallback
   };
 
   return (
-    // Updated main container for minimalist background
     <div className="min-h-screen flex flex-col bg-background">
-      {/* AppNavbar is included here as per your request */}
       <AppNavbar />
       <div className="flex-1 flex items-center justify-center p-4">
-        <div className="w-full max-w-2xl"> {/* Adjusted max-width for overall page content */}
+        <div className="w-full max-w-2xl">
           {renderContent()}
         </div>
       </div>

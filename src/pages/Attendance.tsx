@@ -6,11 +6,11 @@ import {
   query,
   where,
   getDocs,
-  orderBy,
-  limit,
   Timestamp,
   writeBatch,
   doc,
+  getDoc,
+  setDoc,
 } from "firebase/firestore";
 
 // --- Component Imports ---
@@ -31,13 +31,12 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-}
-  from "@/components/ui/select";
+} from "@/components/ui/select";
 import { useAdminAuth } from "@/context/AdminAuthContext";
 import { Loader2 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { motion } from "framer-motion";
-import { cn } from "@/lib/utils"; // Import cn for conditional classnames
+import { cn } from "@/lib/utils";
 
 // --- Type Definitions ---
 type Employee = { id: string; name: string; email: string };
@@ -58,44 +57,45 @@ export default function Attendance() {
     setEditing(false);
     try {
       const empSnapshot = await getDocs(collection(db, "employees"));
-      const empData = empSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as Employee[];
+      const empData = empSnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...(doc.data() as Omit<Employee, "id">),
+      }));
       setEmployees(empData);
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
+      const now = new Date();
+      const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const todaysId = todayUTC.toISOString().split("T")[0];
 
-      const standupsQuery = query(
-        collection(db, "standups"),
-        where("scheduled_at", ">=", Timestamp.fromDate(today)),
-        where("scheduled_at", "<", Timestamp.fromDate(tomorrow)),
-        orderBy("scheduled_at", "desc"),
-        limit(1)
-      );
-      const standupSnapshot = await getDocs(standupsQuery);
+      const standupRef = doc(db, "standups", todaysId);
+      const standupSnap = await getDoc(standupRef);
 
-      if (!standupSnapshot.empty) {
-        const standupDoc = standupSnapshot.docs[0];
-        const standupData = { id: standupDoc.id, ...standupDoc.data() } as Standup;
-
-        const attendanceQuery = query(collection(db, "attendance"), where("standup_id", "==", standupData.id));
-        const attSnapshot = await getDocs(attendanceQuery);
-
+      if (standupSnap.exists()) {
+        const standupDoc = { id: standupSnap.id, ...(standupSnap.data() as Omit<Standup, "id">) };
+        const attSnapshot = await getDocs(
+          query(
+            collection(db, "attendance"),
+            where("standup_id", "==", standupDoc.id)
+          )
+        );
         const map: Record<string, Attendance> = {};
-        attSnapshot.forEach((doc) => {
-          const attDoc = doc.data() as Attendance;
-          map[attDoc.employee_id] = attDoc;
+        attSnapshot.forEach(d => {
+          const a = d.data() as Attendance;
+          map[a.employee_id] = a;
         });
         setAttendance(map);
-        setEditedAtt({});
       } else {
         setAttendance({});
-        setEditedAtt({});
       }
+
+      setEditedAtt({});
     } catch (error) {
       console.error("Failed to fetch attendance data:", error);
-      toast({ title: "Error", description: "Could not fetch attendance data.", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Could not fetch attendance data.",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -106,67 +106,80 @@ export default function Attendance() {
   }, [fetchData]);
 
   const handleEdit = () => {
-    const initial = Object.fromEntries(employees.map((emp) => [emp.id, attendance[emp.id]?.status || "Missed"]));
+    const initial = Object.fromEntries(
+      employees.map(emp => [
+        emp.id,
+        attendance[emp.id]?.status || "Missed",
+      ])
+    );
     setEditedAtt(initial);
     setEditing(true);
   };
 
   const handleChange = (empId: string, val: string) => {
-    setEditedAtt((prev) => ({ ...prev, [empId]: val }));
+    setEditedAtt(prev => ({ ...prev, [empId]: val }));
   };
 
-  const getTodaysStandup = async (): Promise<Standup | null> => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
+  // MODIFIED: Now handles cases where an existing standup document is missing the scheduled_at field.
+  const getOrCreateTodaysStandup = async (): Promise<Standup> => {
+    const now = new Date();
+    const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const todaysId = todayUTC.toISOString().split("T")[0];
 
-    const standupsQuery = query(
-      collection(db, "standups"),
-      where("scheduled_at", ">=", Timestamp.fromDate(today)),
-      where("scheduled_at", "<", Timestamp.fromDate(tomorrow)),
-      orderBy("scheduled_at", "desc"),
-      limit(1)
-    );
-    const standupSnapshot = await getDocs(standupsQuery);
+    const standupRef = doc(db, "standups", todaysId);
+    const standupSnap = await getDoc(standupRef);
+    const tsNow = Timestamp.now();
 
-    if (standupSnapshot.empty) {
-      return null;
+    // If the document exists, check its content
+    if (standupSnap.exists()) {
+      const data = standupSnap.data();
+      // If the crucial 'scheduled_at' field is missing, update the document
+      if (!data.scheduled_at) {
+        await setDoc(standupRef, { scheduled_at: tsNow }, { merge: true });
+        return { id: standupSnap.id, scheduled_at: tsNow };
+      }
+      // Otherwise, return the existing data
+      return { id: standupSnap.id, ...(data as Omit<Standup, "id">) };
     }
-    const standupDoc = standupSnapshot.docs[0];
-    return { id: standupDoc.id, ...standupDoc.data() } as Standup;
+
+    // If the document doesn't exist, create it with the timestamp
+    await setDoc(standupRef, { scheduled_at: tsNow });
+    return { id: todaysId, scheduled_at: tsNow };
   };
 
   const handleSave = async () => {
     setLoading(true);
-    const standup = await getTodaysStandup();
-    if (!standup) {
-      toast({ title: "Error", description: "No standup scheduled for today.", variant: "destructive" });
-      setLoading(false);
-      return;
-    }
-
-    const batch = writeBatch(db);
-    employees.forEach((emp) => {
-      const attendanceDocId = `${standup.id}_${emp.id}`;
-      const attendanceDocRef = doc(db, "attendance", attendanceDocId);
-      const dataToSet = {
-        standup_id: standup.id,
-        employee_id: emp.id,
-        status: editedAtt[emp.id] || "Missed",
-        scheduled_at: standup.scheduled_at
-      };
-      batch.set(attendanceDocRef, dataToSet, { merge: true });
-    });
-
     try {
+      const standup = await getOrCreateTodaysStandup();
+      const markedAtTimestamp = Timestamp.now();
+
+      const batch = writeBatch(db);
+      employees.forEach(emp => {
+        const ref = doc(db, "attendance", `${standup.id}_${emp.id}`);
+        batch.set(
+          ref,
+          {
+            standup_id: standup.id,
+            employee_id: emp.id,
+            status: editedAtt[emp.id] || "Missed",
+            scheduled_at: standup.scheduled_at,
+            markedAt: markedAtTimestamp,
+          },
+          { merge: true }
+        );
+      });
       await batch.commit();
+
       await fetchData();
       setEditing(false);
-      toast({ title: "Success", description: "Attendance has been saved." });
+      toast({ title: "Success", description: "Attendance saved." });
     } catch (error) {
       console.error("Failed to save attendance:", error);
-      toast({ title: "Error", description: "Failed to save attendance.", variant: "destructive" });
+      toast({
+        title: "Error",
+        description: "Could not save attendance.",
+        variant: "destructive",
+      });
     } finally {
       setLoading(false);
     }
@@ -174,23 +187,16 @@ export default function Attendance() {
 
   const handleSyncSheet = async () => {
     setLoading(true);
-    const standup = await getTodaysStandup();
-    if (!standup) {
-      toast({ title: "No standup found for today.", variant: "destructive" });
-      setLoading(false);
-      return;
-    }
-
-    const dataToSend = employees.map((emp) => ({
-      standup_id: standup.id,
-      standup_time: standup.scheduled_at.toDate().toLocaleString(),
-      employee_id: emp.id,
-      employee_name: emp.name,
-      employee_email: emp.email,
-      status: attendance[emp.id]?.status || "Missed",
-    }));
-
     try {
+      const standup = await getOrCreateTodaysStandup();
+      const dataToSend = employees.map(emp => ({
+        standup_id: standup.id,
+        standup_time: standup.scheduled_at.toDate().toLocaleString(),
+        employee_id: emp.id,
+        employee_name: emp.name,
+        employee_email: emp.email,
+        status: attendance[emp.id]?.status || "Missed",
+      }));
       await fetch(
         "https://script.google.com/macros/s/AKfycbzaRO0VUstPMLRbDPNQEHhpbrChn37aNVhfhS6mt0SJ_QCQ-wK78Un-LwETZiI1PqWdjw/exec",
         {
@@ -201,22 +207,23 @@ export default function Attendance() {
         }
       );
       toast({
-        title: "Google Sheet sync completed!",
-        description: "Data has been sent to the spreadsheet.",
+        title: "Sync complete",
+        description: "Sent to Google Sheet.",
       });
-    } catch (error: unknown) {
+    } catch (err: any) {
       toast({
-        title: "Google Sheet sync failed",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: "Sync failed",
+        description: err.message || "Unknown error",
         variant: "destructive",
       });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const totalEmployees = employees.length;
   const presentCount = employees.filter(
-    (emp) => (editing ? editedAtt[emp.id] : attendance[emp.id]?.status) === "Present"
+    emp => (editing ? editedAtt[emp.id] : attendance[emp.id]?.status) === "Present"
   ).length;
 
   return (
@@ -230,7 +237,7 @@ export default function Attendance() {
           className="w-full max-w-4xl"
         >
           <Card className="p-6 shadow-lg">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+            <CardHeader className="flex flex-row justify-between items-start pb-4">
               <CardTitle className="text-3xl font-bold">Attendance</CardTitle>
               {admin && (
                 <Button onClick={handleSyncSheet} disabled={loading} variant="outline">
@@ -242,7 +249,9 @@ export default function Attendance() {
               {loading ? (
                 <div className="flex justify-center items-center p-8">
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                  <span className="ml-3 text-lg text-muted-foreground">Loading attendance...</span>
+                  <span className="ml-3 text-lg text-muted-foreground">
+                    Loading attendance...
+                  </span>
                 </div>
               ) : (
                 <>
@@ -253,25 +262,30 @@ export default function Attendance() {
                         Present: {presentCount} / {totalEmployees}
                       </span>
                     </div>
-
-                    {admin && (
-                      <>
-                        {!editing ? (
-                          <Button variant="secondary" size="sm" onClick={handleEdit}>Edit</Button>
-                        ) : (
-                          <div className="flex gap-2">
-                            <Button variant="outline" size="sm" onClick={() => {
+                    {admin &&
+                      (editing ? (
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
                               setEditing(false);
                               setEditedAtt({});
-                            }}>Cancel</Button>
-                            <Button size="sm" onClick={handleSave}>Save</Button>
-                          </div>
-                        )}
-                      </>
-                    )}
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                          <Button size="sm" onClick={handleSave}>
+                            Save
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button variant="secondary" size="sm" onClick={handleEdit}>
+                          Edit
+                        </Button>
+                      ))}
                   </div>
-
-                  <div className="overflow-x-auto max-h-[60vh] overflow-y-auto rounded-md border">
+                  <div className="overflow-auto rounded-md border max-h-[60vh]">
                     <Table>
                       <TableHeader className="sticky top-0 bg-secondary/80 z-10">
                         <TableRow>
@@ -287,22 +301,21 @@ export default function Attendance() {
                             </TableCell>
                           </TableRow>
                         ) : (
-                          employees.map((emp) => (
+                          employees.map(emp => (
                             <TableRow key={emp.id}>
-                              <TableCell className="font-medium">
-                                {emp.name}
-                              </TableCell>
+                              <TableCell className="font-medium">{emp.name}</TableCell>
                               <TableCell>
                                 {editing && admin ? (
                                   <Select
                                     value={editedAtt[emp.id]}
-                                    onValueChange={(value) => handleChange(emp.id, value)}
+                                    onValueChange={val => handleChange(emp.id, val)}
                                   >
-                                    {/* Apply conditional styling to SelectTrigger based on selected value */}
                                     <SelectTrigger
                                       className={cn(
                                         "w-full md:w-[180px]",
-                                        editedAtt[emp.id] === 'Present' ? 'text-green-600' : 'text-orange-600'
+                                        editedAtt[emp.id] === "Present"
+                                          ? "text-green-600"
+                                          : "text-orange-600"
                                       )}
                                     >
                                       <SelectValue placeholder="Set status" />
@@ -315,12 +328,14 @@ export default function Attendance() {
                                     </SelectContent>
                                   </Select>
                                 ) : (
-                                  <span className={
-                                    attendance[emp.id]?.status === 'Present'
-                                      ? 'text-green-600 font-semibold'
-                                      : 'text-orange-600 font-semibold'
-                                  }>
-                                    {attendance[emp.id]?.status || 'Missed'}
+                                  <span
+                                    className={
+                                      attendance[emp.id]?.status === "Present"
+                                        ? "text-green-600 font-semibold"
+                                        : "text-orange-600 font-semibold"
+                                    }
+                                  >
+                                    {attendance[emp.id]?.status || "Missed"}
                                   </span>
                                 )}
                               </TableCell>

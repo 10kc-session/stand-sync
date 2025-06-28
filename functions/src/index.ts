@@ -2,6 +2,7 @@ import * as admin from "firebase-admin";
 import { JWT } from "google-auth-library";
 import { google } from "googleapis";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { DecodedIdToken } from "firebase-admin/auth";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import {
     parse,
@@ -11,6 +12,7 @@ import {
     endOfDay,
     parseISO,
     format,
+    isValid
 } from "date-fns";
 
 admin.initializeApp();
@@ -21,25 +23,102 @@ function getGeminiKey(): string {
     return key;
 }
 
-interface GetFeedbackSummaryData {
-    employeeId: string;
-    timeFrame: "daily" | "monthly" | "specific" | "range" | "full";
-    date?: string;
-    startDate?: string;
-    endDate?: string;
+interface AddAdminRoleData { email: string; }
+interface CustomDecodedIdToken extends DecodedIdToken { isAdmin?: boolean; }
+
+export const addAdminRole = onCall<AddAdminRoleData>(async (request) => {
+    if (!request.auth) throw new HttpsError("unauthenticated", "Login required.");
+    const caller = request.auth.token as CustomDecodedIdToken;
+    if (!caller.isAdmin) throw new HttpsError("permission-denied", "Admins only.");
+
+    const email = request.data.email?.trim();
+    if (!email) {
+        throw new HttpsError("invalid-argument", "Provide a valid email.");
+    }
+
+    try {
+        const user = await admin.auth().getUserByEmail(email);
+        await admin.auth().setCustomUserClaims(user.uid, { isAdmin: true });
+        return { message: `${email} is now an admin.` };
+    } catch (err: any) {
+        if (err.code === "auth/user-not-found") {
+            throw new HttpsError("not-found", "User not found.");
+        }
+        console.error("addAdminRole error:", err);
+        throw new HttpsError("internal", "Could not set admin role.");
+    }
+});
+
+// --- MODIFICATION START 1: The new flexible date parsing function ---
+/**
+ * Tries to parse a date string using a list of supported formats.
+ * @param dateString The raw date string from the Google Sheet.
+ * @returns A valid Date object or an Invalid Date if no format matches.
+ */
+function parseDynamicDate(dateString: string): Date {
+    if (!dateString) {
+        return new Date(NaN); // Return an invalid date for empty strings
+    }
+
+    // List of formats to try, in order of preference.
+    // Add any new formats you encounter to this array.
+    const SUPPORTED_DATE_FORMATS = [
+        // --- Formats with Time (More Specific First) ---
+        'M/d/yyyy H:mm:ss',   // "6/7/2025 14:30:15"
+        'M/d/yyyy H:mm',      // "6/7/2025 14:30"
+        'yyyy-MM-dd HH:mm:ss',// "2025-06-07 14:30:15" (ISO-like)
+        'yyyy-MM-dd HH:mm',   // "2025-06-07 14:30"
+        'MMMM d, yyyy h:mm a',// "June 7, 2025 2:30 PM" (with AM/PM)
+
+        // --- Date-Only Formats ---
+        'MMM d, yyyy',        // "Jun 7, 2025"
+        'yyyy-MM-dd',         // "2025-06-07" (ISO Standard - unambiguous)
+        'M/d/yyyy',           // "6/7/2025" (Common US)
+        'dd/MM/yyyy',         // "07/06/2025" (Common European)
+        'dd-MMM-yyyy',        // "07-Jun-2025"
+    ];
+
+    for (const formatString of SUPPORTED_DATE_FORMATS) {
+        const parsedDate = parse(dateString, formatString, new Date());
+        if (isValid(parsedDate)) {
+            return parsedDate; // Success! Return the valid date.
+        }
+    }
+
+    // If the loop finishes, no format matched. Return an invalid date.
+    console.warn(`Unrecognized date format: "${dateString}"`);
+    return new Date(NaN);
+}
+// --- MODIFICATION END 1 ---
+
+
+// Initialize Firebase Admin SDK if not already initialized
+if (!admin.apps.length) {
+    admin.initializeApp();
 }
 
-interface SummaryGraph {
+// Ensure you have these type definitions if they are not already in a shared functions/types.ts file
+type GetFeedbackSummaryData = {
+    employeeId: string;
+    timeFrame: "daily" | "monthly" | "specific" | "range" | "full";
+    date?: string; // ISO string
+    startDate?: string; // YYYY-MM-DD
+    endDate?: string; // YYYY-MM-DD
+};
+
+type SummaryGraph = {
     totalFeedbacks: number;
     avgUnderstanding: number;
     avgInstructor: number;
-}
+};
 
-interface TimeseriesGraph {
+type TimeseriesGraph = {
     labels: string[];
-    understanding: number[];
-    instructor: number[];
-}
+    understanding: number[]; // Now always numbers, as nulls are skipped
+    instructor: number[];    // Now always numbers, as nulls are skipped
+};
+
+
 export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
     {
         timeoutSeconds: 120,
@@ -47,28 +126,58 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
         secrets: ["GEMINI_KEY", "SHEETS_SA_KEY"],
     },
     async (request) => {
-        if (request.auth?.token.isAdmin !== true) {
-            throw new HttpsError("permission-denied", "Admins only.");
-        }
-        const { employeeId, timeFrame, date, startDate, endDate } = request.data;
-        if (!employeeId) {
-            throw new HttpsError("invalid-argument", "Missing employeeId.");
+        // 1) Authentication and Authorization
+        const callerUid = request.auth?.uid;
+        const requestedEmployeeId = request.data.employeeId;
+
+        if (!callerUid) {
+            throw new HttpsError("unauthenticated", "Authentication required to access feedback data.");
         }
 
-        // 2) Load sheet URL
-        const empDoc = await admin.firestore().collection("employees").doc(employeeId).get();
-        if (!empDoc.exists) {
-            throw new HttpsError("not-found", "Employee not found.");
+        // --- SECURITY CHECK: Authorize access based on roles/ownership ---
+        let isCallerAdmin = false;
+        try {
+            const userRecord = await admin.auth().getUser(callerUid);
+            isCallerAdmin = userRecord.customClaims?.isAdmin === true;
+        } catch (error) {
+            console.error("Error checking admin status for UID:", callerUid, error);
         }
-        const sheetUrl = empDoc.data()?.feedback_sheet_url;
+
+        if (isCallerAdmin) {
+            // Admins are allowed.
+        } else {
+            const empDocRef = admin.firestore().collection("employees").doc(requestedEmployeeId);
+            const empDoc = await empDocRef.get();
+
+            if (!empDoc.exists) {
+                throw new HttpsError("not-found", "Employee not found or you don't have access.");
+            }
+
+            const employeeData = empDoc.data();
+            const employeeUidInDoc = employeeData?.uid;
+
+            if (callerUid !== employeeUidInDoc) {
+                console.warn(`Permission denied: User ${callerUid} attempted to access data for employee ${requestedEmployeeId} (UID: ${employeeUidInDoc}).`);
+                throw new HttpsError("permission-denied", "You do not have permission to view this employee's data.");
+            }
+        }
+        // --- END SECURITY CHECK ---
+
+        // 2) Load sheet URL and extract spreadsheet ID
+        const empDoc = await admin.firestore().collection("employees").doc(requestedEmployeeId).get();
+        const sheetUrl = empDoc.data()?.feedbackSheetUrl;
         if (typeof sheetUrl !== "string") {
-            throw new HttpsError("not-found", "No feedback sheet URL.");
+            throw new HttpsError("not-found", "No feedback sheet URL configured for this employee.");
         }
-        const m = sheetUrl.match(/\/d\/([\w-]+)/);
-        if (!m) throw new HttpsError("invalid-argument", "Invalid Sheet URL.");
-        const spreadsheetId = m[1];
+        const sheetIdMatch = sheetUrl.match(/\/d\/([\w-]+)/);
+        if (!sheetIdMatch || !sheetIdMatch[1]) {
+            throw new HttpsError("invalid-argument", "Invalid Google Sheet URL format in employee data.");
+        }
+        const spreadsheetId = sheetIdMatch[1];
 
-        // 3) Fetch rows
+
+        // --- MODIFICATION START: This is the new, robust sheet fetching logic ---
+        // 3) Fetch rows from Google Sheet
         const saRaw = process.env.SHEETS_SA_KEY!;
         const sa = JSON.parse(saRaw);
         const jwt = new JWT({
@@ -77,9 +186,35 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
             scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
         });
         const sheets = google.sheets({ version: "v4", auth: jwt });
+
+        // Step 3a: Get the GID from the URL. If not present, default to 0 (the first sheet).
+        const gidMatch = sheetUrl.match(/[#&]gid=(\d+)/);
+        const targetGid = gidMatch ? parseInt(gidMatch[1], 10) : 0;
+
+        // Step 3b: Fetch metadata for the entire spreadsheet
+        const spreadsheetMetadata = await sheets.spreadsheets.get({ spreadsheetId });
+
+        // Step 3c: Find the specific sheet's properties using the targetGid
+        const targetSheet = spreadsheetMetadata.data.sheets?.find(
+            (s) => s.properties?.sheetId === targetGid
+        );
+
+        if (!targetSheet?.properties?.title) {
+            throw new HttpsError("not-found", `Sheet with ID (gid) "${targetGid}" could not be found in the spreadsheet.`);
+        }
+
+        // Step 3d: Construct the range dynamically with the sheet's actual current name
+        const sheetName = targetSheet.properties.title;
+        const range = `${sheetName}!A:D`;
+
+        // Step 3e: Fetch the data using the dynamically found range
         const resp = await sheets.spreadsheets.values.get({
-            spreadsheetId, range: "Sheet1!A:D"
+            spreadsheetId,
+            range, // Use the robust, dynamic range instead of a hardcoded one
         });
+        // --- MODIFICATION END ---
+
+
         const rows = resp.data.values;
         if (!rows || rows.length < 2) {
             return {
@@ -93,7 +228,7 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
 
         // 4) Parse into objects
         const dataRows = rows.slice(1).map(r => ({
-            date: parse(r[0]?.toString() || "", "M/d/yyyy H:mm:ss", new Date()),
+            date: parseDynamicDate(r[0]?.toString() || ""),
             understanding: Number(r[1]) || 0,
             instructor: Number(r[2]) || 0,
             comment: (r[3] || "").toString().trim(),
@@ -102,23 +237,23 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
         // 5) Apply filter
         const today0 = startOfDay(new Date());
         let filtered = dataRows;
-        if (timeFrame === "daily") {
+        if (request.data.timeFrame === "daily") {
             filtered = dataRows.filter(x => isSameDay(x.date, today0));
         }
-        else if (timeFrame === "specific" && date) {
-            const tgt = startOfDay(parseISO(date));
+        else if (request.data.timeFrame === "specific" && request.data.date) {
+            const tgt = startOfDay(parseISO(request.data.date));
             filtered = dataRows.filter(x => isSameDay(x.date, tgt));
         }
-        else if (timeFrame === "monthly") {
-            const ref = date ? parseISO(date) : today0;
+        else if (request.data.timeFrame === "monthly") {
+            const ref = request.data.date ? parseISO(request.data.date) : today0;
             filtered = dataRows.filter(x => isSameMonth(x.date, ref));
         }
-        else if (timeFrame === "range" && startDate && endDate) {
-            const s0 = startOfDay(parseISO(startDate));
-            const e0 = endOfDay(parseISO(endDate));    // fully inclusive
+        else if (request.data.timeFrame === "range" && request.data.startDate && request.data.endDate) {
+            const s0 = startOfDay(parseISO(request.data.startDate));
+            const e0 = endOfDay(parseISO(request.data.endDate));
             filtered = dataRows.filter(x => x.date >= s0 && x.date <= e0);
         }
-        // "full" leaves `filtered` === all rows
+        // "full" timeFrame means no filtering applied here.
 
         const totalFeedbacks = filtered.length;
         if (!totalFeedbacks) {
@@ -133,7 +268,7 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
 
         // 6) Build summary graphData
         let graphData: SummaryGraph | null = null;
-        if (["daily", "specific", "monthly"].includes(timeFrame)) {
+        if (["daily", "specific", "monthly"].includes(request.data.timeFrame)) {
             const sumU = filtered.reduce((s, r) => s + r.understanding, 0);
             const sumI = filtered.reduce((s, r) => s + r.instructor, 0);
             graphData = {
@@ -146,68 +281,61 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
         // 7) Build timeseries for full/range
         let graphTimeseries: TimeseriesGraph | null = null;
 
-        // **MODIFIED LOGIC**: For a date range, group data by day and only include days that have feedback.
-        if (timeFrame === "range" && startDate && endDate) {
-            // Use a Map to group feedback entries by day.
-            // Key: 'yyyy-MM-dd' string, Value: { sumU, sumI, count }
-            const dailyData = new Map<string, { sumU: number; sumI: number; count: number }>();
-
-            // 1. Iterate over the filtered data and group it by day.
-            for (const row of filtered) {
-                const dayKey = format(row.date, 'yyyy-MM-dd'); // e.g., "2025-06-05"
-
-                if (!dailyData.has(dayKey)) {
-                    dailyData.set(dayKey, { sumU: 0, sumI: 0, count: 0 });
+        if (request.data.timeFrame === "range") {
+            const dailyAggregates = new Map<string, { sumU: number; sumI: number; count: number }>();
+            filtered.forEach(row => {
+                const dayKey = format(row.date, 'yyyy-MM-dd');
+                if (!dailyAggregates.has(dayKey)) {
+                    dailyAggregates.set(dayKey, { sumU: 0, sumI: 0, count: 0 });
                 }
-
-                const dayStats = dailyData.get(dayKey)!;
+                const dayStats = dailyAggregates.get(dayKey)!;
                 dayStats.sumU += row.understanding;
                 dayStats.sumI += row.instructor;
                 dayStats.count += 1;
-            }
+            });
 
-            // 2. Sort the days chronologically.
-            const sortedDays = Array.from(dailyData.keys()).sort();
+            const sortedDayKeys = Array.from(dailyAggregates.keys()).sort();
 
-            // 3. Build the final arrays for the chart using only the sorted, existing data.
             const labels: string[] = [];
-            const understanding: number[] = [];
-            const instructor: number[] = [];
+            const understandingValues: number[] = [];
+            const instructorValues: number[] = [];
 
-            for (const dayKey of sortedDays) {
-                const dayStats = dailyData.get(dayKey)!;
-
-                labels.push(format(parseISO(dayKey), 'MMM d')); // Format label as "Jun 5"
-
-                const avgU = dayStats.sumU / dayStats.count;
-                const avgI = dayStats.sumI / dayStats.count;
-
-                understanding.push(parseFloat(avgU.toFixed(2)));
-                instructor.push(parseFloat(avgI.toFixed(2)));
+            for (const dayKey of sortedDayKeys) {
+                const dayStats = dailyAggregates.get(dayKey)!;
+                labels.push(format(parseISO(dayKey), 'MMM d'));
+                understandingValues.push(parseFloat((dayStats.sumU / dayStats.count).toFixed(1)));
+                instructorValues.push(parseFloat((dayStats.sumI / dayStats.count).toFixed(1)));
             }
+            graphTimeseries = { labels: labels, understanding: understandingValues, instructor: instructorValues };
 
-            graphTimeseries = { labels, understanding, instructor };
-
-        } else if (timeFrame === "full") {
-            // Logic for "full" history remains the same, showing a 12-month overview.
-            const labels: string[] = [];
-            const understanding: number[] = [];
-            const instructor: number[] = [];
-            for (let m = 0; m < 12; m++) {
-                labels.push(format(new Date(0, m), "MMM"));
-                // This uses all data rows to build the yearly summary
-                const monthRows = dataRows.filter(x => x.date.getMonth() === m);
-                if (monthRows.length) {
-                    const u = monthRows.reduce((s, r) => s + r.understanding, 0) / monthRows.length;
-                    const i = monthRows.reduce((s, r) => s + r.instructor, 0) / monthRows.length;
-                    understanding.push(parseFloat(u.toFixed(2)));
-                    instructor.push(parseFloat(i.toFixed(2)));
-                } else {
-                    understanding.push(0);
-                    instructor.push(0);
+        } else if (request.data.timeFrame === "full") {
+            const monthlyAggregates = new Map<number, { sumU: number; sumI: number; count: number }>();
+            filtered.forEach(row => {
+                const monthKey = row.date.getMonth(); // 0-11
+                if (!monthlyAggregates.has(monthKey)) {
+                    monthlyAggregates.set(monthKey, { sumU: 0, sumI: 0, count: 0 });
                 }
+                const monthStats = monthlyAggregates.get(monthKey)!;
+                monthStats.sumU += row.understanding;
+                monthStats.sumI += row.instructor;
+                monthStats.count += 1;
+            });
+
+            const sortedMonthKeys = Array.from(monthlyAggregates.keys()).sort((a, b) => a - b);
+
+            const labels: string[] = [];
+            const understandingValues: number[] = [];
+            const instructorValues: number[] = [];
+
+            for (const monthKey of sortedMonthKeys) {
+                const monthStats = monthlyAggregates.get(monthKey)!;
+                labels.push(format(new Date(0, monthKey), "MMM"));
+                understandingValues.push(parseFloat((monthStats.sumU / monthStats.count).toFixed(2)));
+                instructorValues.push(parseFloat((monthStats.sumI / monthStats.count).toFixed(2)));
             }
-            graphTimeseries = { labels, understanding, instructor };
+            graphTimeseries = { labels: labels, understanding: understandingValues, instructor: instructorValues };
+        } else {
+            graphTimeseries = null;
         }
 
         // 8) AI summary
@@ -221,7 +349,7 @@ export const getFeedbackSummary = onCall<GetFeedbackSummaryData>(
                 .getGenerativeModel({ model: "gemini-1.5-flash" });
             const prompt = `From the following list of verbatim feedback comments, perform an analysis. Return a valid JSON object with two keys: "positiveFeedback" and "improvementAreas". For "positiveFeedback", return an array of up to 3 objects, where each object has a "quote" key (the verbatim positive comment) and a "keywords" key (an array of 1-3 relevant keywords from the quote). For "improvementAreas", return an array of up to 3 objects, where each object has a "theme" key (a summarized topic like 'Pacing' or 'Interaction') and a "suggestion" key (a concise, actionable suggestion for the instructor). If there are no comments that fit a category, return an empty array for that key. Comments: """${comments.join("\n")}"""`;
             const aiRes = await model.generateContent(prompt);
-            const aiTxt = await aiRes.response.text();
+            const aiTxt = aiRes.response.text();
             try {
                 const js = aiTxt.slice(aiTxt.indexOf("{"), aiTxt.lastIndexOf("}") + 1);
                 const obj = JSON.parse(js);

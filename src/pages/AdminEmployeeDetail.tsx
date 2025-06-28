@@ -40,6 +40,9 @@ import {
 import ChartDataLabels from 'chartjs-plugin-datalabels';
 import { Line, Bar } from 'react-chartjs-2';
 
+import { doc, getDoc } from "firebase/firestore";
+import { db } from "@/integrations/firebase/client";
+
 // Register all necessary Chart.js components including the datalabels plugin
 ChartJS.register(
     CategoryScale,
@@ -59,6 +62,12 @@ type SummaryGraphData = {
     avgUnderstanding: number;
     avgInstructor: number;
 };
+// --- ADD A TYPE FOR THE EMPLOYEE'S DATA ---
+type EmployeeData = {
+    name: string;
+    employeeId: string; // The "NW..." ID
+};
+
 type TimeseriesGraphData = {
     labels: string[];
     understanding: (number | null)[];
@@ -90,6 +99,30 @@ export default function AdminEmployeeDetail() {
     const [summary, setSummary] = useState<FeedbackSummary | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    // --- ADD NEW STATE TO HOLD THE EMPLOYEE'S NAME AND ID ---
+    const [employeeData, setEmployeeData] = useState<EmployeeData | null>(null);
+
+    useEffect(() => {
+        if (!employeeId) return;
+
+        const fetchEmployeeDetails = async () => {
+            const employeeDocRef = doc(db, 'employees', employeeId);
+            const docSnap = await getDoc(employeeDocRef);
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                setEmployeeData({
+                    name: data.name || 'Unknown Name',
+                    employeeId: data.employeeId || 'N/A'
+                });
+            } else {
+                console.error("No such employee document!");
+                setError("Could not find employee details.");
+            }
+        };
+
+        fetchEmployeeDetails();
+    }, [employeeId]); // This effect runs only when the UID from the URL changes
+
 
     // Default filter is now "daily"
     const [activeFilter, setActiveFilter] = useState<ActiveFilter>({ mode: "daily", date: new Date() });
@@ -291,7 +324,16 @@ export default function AdminEmployeeDetail() {
                     <div className="flex justify-between items-center mb-6">
                         <div>
                             <h1 className="text-3xl font-bold">Feedback Dashboard</h1>
-                            <p className="text-muted-foreground">Viewing data for employee ID: {employeeId}</p>
+
+                            {/* --- THIS IS THE KEY CHANGE TO THE DISPLAY --- */}
+                            {employeeData ? (
+                                <p className="text-muted-foreground">
+                                    Viewing data for: <strong>{employeeData.name}</strong> (ID: {employeeData.employeeId})
+                                </p>
+                            ) : (
+                                <p className="text-muted-foreground">Loading employee details...</p>
+                            )}
+
                         </div>
                         <Button variant="outline" onClick={() => navigate("/admin/employees")}>Back to All Employees</Button>
                     </div>

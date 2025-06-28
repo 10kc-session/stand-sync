@@ -1,41 +1,92 @@
+// src/App.tsx
+
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
-import { AdminAuthProvider } from "./context/AdminAuthContext";
-import { UserAuthProvider, useUserAuth } from "./context/UserAuthContext"; // 1. Import useUserAuth
+import { AdminAuthProvider, useAdminAuth } from "./context/AdminAuthContext";
+import { UserAuthProvider, useUserAuth } from "./context/UserAuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
 import AdminProtectedRoute from "./components/AdminProtectedRoute";
 
-// --- Import all your pages ---
-import LandingPage from "./pages/LandingPage"; // 2. Import the new LandingPage
+import LandingPage from "./pages/LandingPage";
+import AuthPage from "./pages/AuthPage";
+import AdminLogin from "./pages/AdminLogin";
 import Index from "./pages/Index";
-import NotFound from "./pages/NotFound";
+import EmployeeSetup from "./pages/EmployeeSetup";
 import Standups from "./pages/Standups";
 import Attendance from "./pages/Attendance";
-import AdminLogin from "./pages/AdminLogin";
 import AdminHome from "./pages/AdminHome";
 import AdminEmployees from "./pages/AdminEmployees";
-import AuthPage from "./pages/AuthPage";
 import AdminEmployeeDetail from "./pages/AdminEmployeeDetail";
+import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
+// Global loading spinner while auth contexts initialize
+const GlobalLoading = () => (
+  <div className="min-h-screen flex flex-col items-center justify-center bg-background">
+    <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-primary border-solid"></div>
+    <p className="mt-4 text-lg text-muted-foreground">Verifying session...</p>
+  </div>
+);
+
 const AppContent = () => {
-  // We move the logic into a child component to access the context
-  const { user } = useUserAuth();
+  const { user, loading: userLoading, initialized: userInitialized } = useUserAuth();
+  const { admin, loading: adminLoading, initialized: adminInitialized } = useAdminAuth();
+
+  // Wait until both contexts finish their initial checks
+  if (!userInitialized || !adminInitialized) {
+    return <GlobalLoading />;
+  }
 
   return (
     <Routes>
-      {/* --- CHANGE 3: The root route now shows LandingPage or the dashboard --- */}
-      <Route path="/" element={user ? <Index /> : <LandingPage />} />
-
+      {/* Public */}
       <Route path="/auth" element={<AuthPage />} />
       <Route path="/admin/login" element={<AdminLogin />} />
 
-      {/* --- All your protected routes remain the same --- */}
+      {/* Root: landing or dashboard or admin */}
+      <Route
+        path="/"
+        element={
+          !user ? (
+            <LandingPage />
+          ) : admin ? (
+            <Navigate to="/admin" replace />
+          ) : (
+            <ProtectedRoute>
+              <Index />
+            </ProtectedRoute>
+          )
+        }
+      />
+
+      {/* Explicit index, same logic as "/" */}
+      <Route
+        path="/index"
+        element={
+          admin ? (
+            <Navigate to="/admin" replace />
+          ) : (
+            <ProtectedRoute>
+              <Index />
+            </ProtectedRoute>
+          )
+        }
+      />
+
+      {/* Employee-only */}
+      <Route
+        path="/setup"
+        element={
+          <ProtectedRoute>
+            <EmployeeSetup />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/standups"
         element={
@@ -52,6 +103,8 @@ const AppContent = () => {
           </ProtectedRoute>
         }
       />
+
+      {/* Admin-only */}
       <Route
         path="/admin"
         element={
@@ -77,11 +130,11 @@ const AppContent = () => {
         }
       />
 
+      {/* Fallback */}
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
 };
-
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -91,7 +144,6 @@ const App = () => (
       <BrowserRouter>
         <UserAuthProvider>
           <AdminAuthProvider>
-            {/* We render the new AppContent component here */}
             <AppContent />
           </AdminAuthProvider>
         </UserAuthProvider>

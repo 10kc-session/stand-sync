@@ -1,52 +1,59 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { useUserAuth } from "./UserAuthContext"; // We need the main user context to get the Firebase user
+import { useUserAuth } from "./UserAuthContext";
 
-// The new Admin type will be based on the Firebase user object
 type Admin = {
   email: string | null;
   uid: string;
 };
 
-// The new context will only provide the admin object, as login/logout are handled elsewhere
 type AdminAuthContextType = {
   admin: Admin | null;
+  loading: boolean;
+  initialized: boolean; // NEW: Track initialization state
 };
 
 const AdminAuthContext = createContext<AdminAuthContextType | undefined>(undefined);
 
 export const AdminAuthProvider = ({ children }: { children: ReactNode }) => {
-  const { user } = useUserAuth(); // Get the currently logged-in Firebase user
+  const { user, loading: userAuthLoading, initialized: userAuthInitialized } = useUserAuth(); // NEW: Added initialized
   const [admin, setAdmin] = useState<Admin | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [initialized, setInitialized] = useState(false); // NEW
 
   useEffect(() => {
-    // This effect runs whenever the main Firebase user logs in or out
-    if (user) {
-      // When a user is logged in, check their ID token for the admin claim.
-      // Passing `true` to getIdTokenResult forces a refresh to get the latest claims.
-      user.getIdTokenResult(true)
-        .then((idTokenResult) => {
-          // Check if the custom claim 'isAdmin' is set to true on the token
-          if (idTokenResult.claims.isAdmin === true) {
-            // If it is, this user is an admin. Set the admin state.
-            setAdmin({ email: user.email, uid: user.uid });
-          } else {
-            // If the claim doesn't exist or isn't true, they are not an admin.
-            setAdmin(null);
-          }
-        })
-        .catch(() => {
-          // If there's an error getting the token, assume they are not an admin.
-          setAdmin(null);
-        });
-    } else {
-      // If no user is logged in, there can be no admin.
+    // Only check admin status if user auth is initialized
+    if (!userAuthInitialized) return;
+
+    setLoading(true);
+
+    if (!user) {
       setAdmin(null);
+      setLoading(false);
+      setInitialized(true); // NEW
+      return;
     }
-  }, [user]); // This logic re-runs every time the user state changes
+
+    user.getIdToken(true)
+      .then(() => user.getIdTokenResult()) // Get fresh token result
+      .then((idTokenResult) => {
+        if (idTokenResult.claims.isAdmin === true) {
+          setAdmin({ email: user.email, uid: user.uid });
+        } else {
+          setAdmin(null);
+        }
+      })
+      .catch((error) => {
+        console.error("Error verifying admin status:", error);
+        setAdmin(null);
+      })
+      .finally(() => {
+        setLoading(false);
+        setInitialized(true); // NEW
+      });
+  }, [user, userAuthInitialized]); // UPDATED dependency
 
   return (
-    // We only need to provide the 'admin' object to the rest of the app
-    <AdminAuthContext.Provider value={{ admin }}>
+    <AdminAuthContext.Provider value={{ admin, loading, initialized }}> {/* UPDATED */}
       {children}
     </AdminAuthContext.Provider>
   );

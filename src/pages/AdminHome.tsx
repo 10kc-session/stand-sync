@@ -22,8 +22,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"; // 
 import { motion } from "framer-motion"; // Added motion for animations
 
 const AdminHome = () => {
-  const { admin } = useAdminAuth();
+  const { admin, loading: adminLoading } = useAdminAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (adminLoading) return;
+    if (!admin) navigate("/admin/login");
+  }, [admin, adminLoading, navigate]);
 
   const [summary, setSummary] = useState<{
     standupTime: string | null;
@@ -32,10 +37,6 @@ const AdminHome = () => {
 
   const [employeeCount, setEmployeeCount] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(true);
-
-  useEffect(() => {
-    if (!admin) navigate("/admin/login");
-  }, [admin, navigate]);
 
   useEffect(() => {
     if (!admin) return;
@@ -116,8 +117,11 @@ const AdminHome = () => {
                 <BellRing className="h-4 w-4" />
                 <AlertTitle>Welcome!</AlertTitle>
                 <AlertDescription>
-                  {/* CHANGED: Fallback to email, then 'Admin' */}
-                  Welcome, <span className="font-bold text-blue-800">{admin?.email || 'Admin'}!</span>
+                  {/* Show only the name part before '@' from email, fallback to 'Admin' */}
+                  <span className="font-bold text-blue-800">
+                    {admin?.email ? admin.email.split("@")[0] : "Admin"}!
+                  </span>
+                  <br />
                   Manage your team's standups and attendance.
                 </AlertDescription>
               </Alert>

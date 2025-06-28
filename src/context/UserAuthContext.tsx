@@ -1,40 +1,64 @@
+// src/context/UserAuthContext.tsx
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
-// --- CHANGE 1: Corrected the import path ---
-import { auth } from '@/integrations/firebase/client';
+import { auth, db } from '@/integrations/firebase/client';
+import { doc, DocumentData, onSnapshot } from 'firebase/firestore';
 
-// Define the shape of the context data
+interface UserProfile extends DocumentData {
+    employeeId?: string;
+    hasCompletedSetup?: boolean;
+}
+
 interface AuthContextType {
     user: User | null;
+    userProfile: UserProfile | null;
     loading: boolean;
+    initialized: boolean; // NEW: Track initialization state
 }
 
 const UserAuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Define the props for the provider component
 interface UserAuthProviderProps {
     children: ReactNode;
 }
 
 export const UserAuthProvider = ({ children }: UserAuthProviderProps) => {
     const [user, setUser] = useState<User | null>(null);
+    const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
     const [loading, setLoading] = useState(true);
+    const [initialized, setInitialized] = useState(false); // NEW
 
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-            // --- CHANGE 2: Removed the emailVerified check ---
-            // This context now provides the raw user object.
-            // This is crucial for the AdminAuthContext to be able to check
-            // an admin's claims, even if their email is not yet verified.
-            setUser(currentUser);
-            setLoading(false);
+        const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+            if (currentUser) {
+                setUser(currentUser);
+                setInitialized(true); // NEW: Set initialized immediately
+
+                // --- MODIFIED: Pointing to the 'employees' collection ---
+                const employeeDocRef = doc(db, 'employees', currentUser.uid);
+
+                const unsubscribeProfile = onSnapshot(employeeDocRef, (docSnap) => {
+                    setUserProfile(docSnap.exists() ? docSnap.data() : null);
+                    setLoading(false);
+                }, (error) => {
+                    console.error("Firestore snapshot error on employees collection:", error);
+                    setUserProfile(null);
+                    setLoading(false);
+                });
+
+                return () => unsubscribeProfile();
+            } else {
+                setUser(null);
+                setUserProfile(null);
+                setLoading(false);
+                setInitialized(true); // NEW: Set initialized immediately
+            }
         });
 
-        // Cleanup subscription on unmount
-        return () => unsubscribe();
+        return () => unsubscribeAuth();
     }, []);
 
-    const value = { user, loading };
+    const value = { user, userProfile, loading, initialized }; // UPDATED
 
     return (
         <UserAuthContext.Provider value={value}>
@@ -43,7 +67,6 @@ export const UserAuthProvider = ({ children }: UserAuthProviderProps) => {
     );
 };
 
-// Custom hook to use the auth context
 export const useUserAuth = () => {
     const context = useContext(UserAuthContext);
     if (context === undefined) {
