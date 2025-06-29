@@ -1,3 +1,18 @@
+/**
+ * Script to set a custom admin claim for a Firebase user by email.
+ *
+ * Usage:
+ *   node set-admin.cjs user@example.com
+ *
+ * This script initializes the Firebase Admin SDK using a service account key,
+ * retrieves a user by their email address, and sets a custom claim `{ isAdmin: true }`
+ * for that user. The user may need to log out and log back in for the changes to take effect.
+ *
+ * Arguments:
+ *   email {string} - The email address of the user to be made an admin.
+ *
+ * Exits with code 0 on success, 1 on error.
+ */
 const admin = require("firebase-admin");
 const serviceAccount = require("./serviceAccountKey.json");
 

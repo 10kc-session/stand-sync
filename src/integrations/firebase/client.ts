@@ -1,3 +1,17 @@
+/**
+ * Initializes and exports Firebase services (Auth, Firestore, Storage) using configuration
+ * from environment variables. This module sets up the Firebase app instance and provides
+ * ready-to-use exports for authentication, database, and storage functionalities.
+ *
+ * @module firebase/client
+ *
+ * @remarks
+ * - Uses Vite environment variables prefixed with `VITE_FIREBASE_`.
+ * - Exports:
+ *   - `auth`: Firebase Authentication instance.
+ *   - `db`: Firestore database instance.
+ *   - `storage`: Firebase Storage instance.
+ */
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore"; // <-- IMPORT FIRESTORE

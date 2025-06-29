@@ -1,5 +1,23 @@
+/**
+ * Attendance page component for managing and viewing employee attendance records.
+ *
+ * - Fetches employee and attendance data from Firestore.
+ * - Allows admins to edit and save attendance for a selected date.
+ * - Supports syncing attendance data to a Google Sheet via an external API.
+ * - Displays attendance status for each employee and provides summary statistics.
+ * - Integrates with custom UI components and context for authentication and notifications.
+ *
+ * @component
+ * @returns {JSX.Element} The rendered Attendance management page.
+ *
+ * @remarks
+ * - Only admins can edit or sync attendance.
+ * - Attendance is tied to a specific standup date (one per day).
+ * - Uses Firestore batch writes for efficient updates.
+ */
 import React, { useEffect, useState, useCallback } from "react";
 // --- Firebase Imports ---
+
 import { db } from "@/integrations/firebase/client";
 import {
   collection,
@@ -32,15 +50,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
 import { useAdminAuth } from "@/context/AdminAuthContext";
-import { Loader2 } from "lucide-react";
+import { Loader2, Calendar as CalendarIcon } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { format } from "date-fns";
 
 // --- Type Definitions ---
-type Employee = { id: string; name: string; email: string };
-type Standup = { id: string; scheduled_at: Timestamp };
+type Employee = { id: string; name: string; email: string; employeeId: string };
+// Updated to use the correct field name
+type Standup = { id: string; scheduledTime: Timestamp };
 type Attendance = { employee_id: string; status: string | null };
 
 export default function Attendance() {
@@ -50,111 +76,119 @@ export default function Attendance() {
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [editedAtt, setEditedAtt] = useState<Record<string, string>>({});
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const { toast } = useToast();
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    setEditing(false);
-    try {
-      const empSnapshot = await getDocs(collection(db, "employees"));
-      const empData = empSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...(doc.data() as Omit<Employee, "id">),
-      }));
-      setEmployees(empData);
+  const fetchData = useCallback(
+    async (date: Date) => {
+      setLoading(true);
+      setEditing(false);
+      try {
+        // Load employee list once
+        if (employees.length === 0) {
+          const empSnap = await getDocs(collection(db, "employees"));
+          setEmployees(
+            empSnap.docs.map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<Employee, "id">),
+            }))
+          );
+        }
 
-      const now = new Date();
-      const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-      const todaysId = todayUTC.toISOString().split("T")[0];
+        // Build today's standup ID
+        const standupId = format(date, "yyyy-MM-dd");
+        const standupRef = doc(db, "standups", standupId);
+        const standupSnap = await getDoc(standupRef);
 
-      const standupRef = doc(db, "standups", todaysId);
-      const standupSnap = await getDoc(standupRef);
+        if (standupSnap.exists()) {
+          // Pull in the correct field
+          const standupDoc = {
+            id: standupSnap.id,
+            ...(standupSnap.data() as Omit<Standup, "id">),
+          };
+          const attSnap = await getDocs(
+            query(
+              collection(db, "attendance"),
+              where("standup_id", "==", standupDoc.id)
+            )
+          );
+          const map: Record<string, Attendance> = {};
+          attSnap.forEach((d) => {
+            const a = d.data() as Attendance;
+            map[a.employee_id] = a;
+          });
+          setAttendance(map);
+        } else {
+          setAttendance({});
+        }
 
-      if (standupSnap.exists()) {
-        const standupDoc = { id: standupSnap.id, ...(standupSnap.data() as Omit<Standup, "id">) };
-        const attSnapshot = await getDocs(
-          query(
-            collection(db, "attendance"),
-            where("standup_id", "==", standupDoc.id)
-          )
-        );
-        const map: Record<string, Attendance> = {};
-        attSnapshot.forEach(d => {
-          const a = d.data() as Attendance;
-          map[a.employee_id] = a;
+        setEditedAtt({});
+      } catch (err) {
+        console.error("Failed to fetch attendance data:", err);
+        toast({
+          title: "Error",
+          description: "Could not fetch attendance data.",
+          variant: "destructive",
         });
-        setAttendance(map);
-      } else {
-        setAttendance({});
+      } finally {
+        setLoading(false);
       }
-
-      setEditedAtt({});
-    } catch (error) {
-      console.error("Failed to fetch attendance data:", error);
-      toast({
-        title: "Error",
-        description: "Could not fetch attendance data.",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
+    },
+    [employees.length, toast]
+  );
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchData(selectedDate);
+  }, [selectedDate, fetchData]);
 
   const handleEdit = () => {
-    const initial = Object.fromEntries(
-      employees.map(emp => [
-        emp.id,
-        attendance[emp.id]?.status || "Missed",
-      ])
+    setEditedAtt(
+      Object.fromEntries(
+        employees.map((emp) => [
+          emp.id,
+          attendance[emp.id]?.status || "Missed",
+        ])
+      )
     );
-    setEditedAtt(initial);
     setEditing(true);
   };
 
   const handleChange = (empId: string, val: string) => {
-    setEditedAtt(prev => ({ ...prev, [empId]: val }));
+    setEditedAtt((prev) => ({ ...prev, [empId]: val }));
   };
 
-  // MODIFIED: Now handles cases where an existing standup document is missing the scheduled_at field.
-  const getOrCreateTodaysStandup = async (): Promise<Standup> => {
-    const now = new Date();
-    const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const todaysId = todayUTC.toISOString().split("T")[0];
-
-    const standupRef = doc(db, "standups", todaysId);
+  const getOrCreateStandupForDate = async (date: Date): Promise<Standup> => {
+    const standupId = format(date, "yyyy-MM-dd");
+    const standupRef = doc(db, "standups", standupId);
     const standupSnap = await getDoc(standupRef);
-    const tsNow = Timestamp.now();
+    const now = Timestamp.now();
 
-    // If the document exists, check its content
     if (standupSnap.exists()) {
       const data = standupSnap.data();
-      // If the crucial 'scheduled_at' field is missing, update the document
-      if (!data.scheduled_at) {
-        await setDoc(standupRef, { scheduled_at: tsNow }, { merge: true });
-        return { id: standupSnap.id, scheduled_at: tsNow };
+      // If the document exists but missing the field, patch it
+      if (!("scheduledTime" in data)) {
+        await setDoc(standupRef, { scheduledTime: now }, { merge: true });
+        return { id: standupSnap.id, scheduledTime: now };
       }
-      // Otherwise, return the existing data
-      return { id: standupSnap.id, ...(data as Omit<Standup, "id">) };
+      return {
+        id: standupSnap.id,
+        ...(data as Omit<Standup, "id">),
+      };
     }
 
-    // If the document doesn't exist, create it with the timestamp
-    await setDoc(standupRef, { scheduled_at: tsNow });
-    return { id: todaysId, scheduled_at: tsNow };
+    // Otherwise create fresh
+    await setDoc(standupRef, { scheduledTime: now });
+    return { id: standupId, scheduledTime: now };
   };
 
   const handleSave = async () => {
     setLoading(true);
     try {
-      const standup = await getOrCreateTodaysStandup();
-      const markedAtTimestamp = Timestamp.now();
-
+      const standup = await getOrCreateStandupForDate(selectedDate);
+      const markedAt = Timestamp.now();
       const batch = writeBatch(db);
-      employees.forEach(emp => {
+
+      employees.forEach((emp) => {
         const ref = doc(db, "attendance", `${standup.id}_${emp.id}`);
         batch.set(
           ref,
@@ -162,19 +196,20 @@ export default function Attendance() {
             standup_id: standup.id,
             employee_id: emp.id,
             status: editedAtt[emp.id] || "Missed",
-            scheduled_at: standup.scheduled_at,
-            markedAt: markedAtTimestamp,
+            // write back to the correct field
+            scheduledTime: standup.scheduledTime,
+            markedAt,
           },
           { merge: true }
         );
       });
-      await batch.commit();
 
-      await fetchData();
+      await batch.commit();
+      await fetchData(selectedDate);
       setEditing(false);
       toast({ title: "Success", description: "Attendance saved." });
-    } catch (error) {
-      console.error("Failed to save attendance:", error);
+    } catch (err) {
+      console.error("Failed to save attendance:", err);
       toast({
         title: "Error",
         description: "Could not save attendance.",
@@ -188,11 +223,11 @@ export default function Attendance() {
   const handleSyncSheet = async () => {
     setLoading(true);
     try {
-      const standup = await getOrCreateTodaysStandup();
-      const dataToSend = employees.map(emp => ({
+      const standup = await getOrCreateStandupForDate(selectedDate);
+      const payload = employees.map((emp) => ({
         standup_id: standup.id,
-        standup_time: standup.scheduled_at.toDate().toLocaleString(),
-        employee_id: emp.id,
+        standup_time: standup.scheduledTime.toDate().toLocaleString(),
+        employee_id: emp.employeeId,
         employee_name: emp.name,
         employee_email: emp.email,
         status: attendance[emp.id]?.status || "Missed",
@@ -203,13 +238,10 @@ export default function Attendance() {
           method: "POST",
           mode: "no-cors",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ records: dataToSend }),
+          body: JSON.stringify({ records: payload }),
         }
       );
-      toast({
-        title: "Sync complete",
-        description: "Sent to Google Sheet.",
-      });
+      toast({ title: "Sync complete", description: "Sent to Google Sheet." });
     } catch (err: any) {
       toast({
         title: "Sync failed",
@@ -222,49 +254,81 @@ export default function Attendance() {
   };
 
   const totalEmployees = employees.length;
-  const presentCount = employees.filter(
-    emp => (editing ? editedAtt[emp.id] : attendance[emp.id]?.status) === "Present"
+  const presentCount = employees.filter((emp) =>
+    (editing ? editedAtt[emp.id] : attendance[emp.id]?.status) === "Present"
   ).length;
 
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <AppNavbar />
-      <main className="flex-1 flex items-center justify-center p-4">
+      <main className="flex-1 flex items-center justify-center p-3 md:p-4">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
           className="w-full max-w-4xl"
         >
-          <Card className="p-6 shadow-lg">
-            <CardHeader className="flex flex-row justify-between items-start pb-4">
-              <CardTitle className="text-3xl font-bold">Attendance</CardTitle>
+          <Card className="p-4 md:p-6 shadow-lg">
+            <CardHeader className="flex flex-col md:flex-row justify-between items-start md:items-center pb-3 md:pb-4 gap-3 md:gap-0">
+              <CardTitle className="text-2xl md:text-3xl font-bold">
+                Attendance
+              </CardTitle>
               {admin && (
-                <Button onClick={handleSyncSheet} disabled={loading} variant="outline">
+                <Button
+                  onClick={handleSyncSheet}
+                  disabled={loading}
+                  variant="outline"
+                  className="w-full md:w-auto"
+                >
                   Resync to Google Sheet
                 </Button>
               )}
             </CardHeader>
             <CardContent>
               {loading ? (
-                <div className="flex justify-center items-center p-8">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                  <span className="ml-3 text-lg text-muted-foreground">
+                <div className="flex justify-center items-center p-6 md:p-8">
+                  <Loader2 className="h-6 w-6 md:h-8 md:w-8 animate-spin text-primary" />
+                  <span className="ml-2 md:ml-3 text-base md:text-lg text-muted-foreground">
                     Loading attendance...
                   </span>
                 </div>
               ) : (
                 <>
-                  <div className="flex justify-between items-center mb-6 pt-2">
-                    <div className="font-semibold text-lg text-foreground">
-                      <span>Today's Attendance</span>
-                      <span className="ml-4 text-green-700 font-extrabold">
-                        Present: {presentCount} / {totalEmployees}
-                      </span>
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 md:mb-6 pt-2 gap-4 md:gap-0">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full md:w-auto">
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            className={cn(
+                              "w-full sm:w-[280px] justify-start text-left font-normal",
+                              !selectedDate && "text-muted-foreground"
+                            )}
+                          >
+                            <CalendarIcon className="mr-2 h-4 w-4" />
+                            {selectedDate
+                              ? format(selectedDate, "PPP")
+                              : <span>Pick a date</span>}
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-auto p-0">
+                          <Calendar
+                            mode="single"
+                            selected={selectedDate}
+                            onSelect={(d) => d && setSelectedDate(d)}
+                            initialFocus
+                          />
+                        </PopoverContent>
+                      </Popover>
+                      <div className="font-semibold text-base md:text-lg text-foreground">
+                        <span className="text-green-700 font-extrabold">
+                          Present: {presentCount} / {totalEmployees}
+                        </span>
+                      </div>
                     </div>
                     {admin &&
                       (editing ? (
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 w-full md:w-auto">
                           <Button
                             variant="outline"
                             size="sm"
@@ -272,47 +336,66 @@ export default function Attendance() {
                               setEditing(false);
                               setEditedAtt({});
                             }}
+                            className="flex-1 md:flex-none"
                           >
                             Cancel
                           </Button>
-                          <Button size="sm" onClick={handleSave}>
+                          <Button
+                            size="sm"
+                            onClick={handleSave}
+                            className="flex-1 md:flex-none"
+                          >
                             Save
                           </Button>
                         </div>
                       ) : (
-                        <Button variant="secondary" size="sm" onClick={handleEdit}>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleEdit}
+                          className="w-full md:w-auto"
+                        >
                           Edit
                         </Button>
                       ))}
                   </div>
-                  <div className="overflow-auto rounded-md border max-h-[60vh]">
-                    <Table>
-                      <TableHeader className="sticky top-0 bg-secondary/80 z-10">
+                  <div className="overflow-auto rounded-md border max-h-[50vh] md:max-h-[60vh]">
+                    <Table className="min-w-[500px] md:min-w-0">
+                      <TableHeader className="sticky top-0 bg-secondary/80 backdrop-blur-sm z-10">
                         <TableRow>
-                          <TableHead className="w-1/2">Name</TableHead>
-                          <TableHead className="w-1/2">Status</TableHead>
+                          <TableHead className="w-1/2 text-sm md:text-base">
+                            Name
+                          </TableHead>
+                          <TableHead className="w-1/2 text-sm md:text-base">
+                            Status
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {employees.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={2} className="h-24 text-center text-muted-foreground">
+                            <TableCell
+                              colSpan={2}
+                              className="h-24 text-center text-muted-foreground"
+                            >
                               No employees found.
                             </TableCell>
                           </TableRow>
                         ) : (
-                          employees.map(emp => (
+                          employees.map((emp) => (
                             <TableRow key={emp.id}>
-                              <TableCell className="font-medium">{emp.name}</TableCell>
+                              <TableCell className="font-medium text-sm md:text-base">
+                                {emp.name}
+                              </TableCell>
                               <TableCell>
                                 {editing && admin ? (
                                   <Select
                                     value={editedAtt[emp.id]}
-                                    onValueChange={val => handleChange(emp.id, val)}
+                                    onValueChange={(v) => handleChange(emp.id, v)}
                                   >
                                     <SelectTrigger
                                       className={cn(
-                                        "w-full md:w-[180px]",
+                                        "w-full text-xs md:text-sm",
                                         editedAtt[emp.id] === "Present"
                                           ? "text-green-600"
                                           : "text-orange-600"
@@ -324,16 +407,19 @@ export default function Attendance() {
                                       <SelectItem value="Present">Present</SelectItem>
                                       <SelectItem value="Missed">Missed</SelectItem>
                                       <SelectItem value="Absent">Absent</SelectItem>
-                                      <SelectItem value="Not Available">Not Available</SelectItem>
+                                      <SelectItem value="Not Available">
+                                        Not Available
+                                      </SelectItem>
                                     </SelectContent>
                                   </Select>
                                 ) : (
                                   <span
-                                    className={
+                                    className={cn(
+                                      "text-xs md:text-sm",
                                       attendance[emp.id]?.status === "Present"
                                         ? "text-green-600 font-semibold"
                                         : "text-orange-600 font-semibold"
-                                    }
+                                    )}
                                   >
                                     {attendance[emp.id]?.status || "Missed"}
                                   </span>

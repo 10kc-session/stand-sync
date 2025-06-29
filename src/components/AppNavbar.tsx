@@ -1,3 +1,23 @@
+/**
+ * AppNavbar component renders the main navigation bar for the Standup-Sync application.
+ *
+ * Features:
+ * - Responsive navigation bar with a mobile dropdown menu and desktop navigation links.
+ * - Displays the application logo and name.
+ * - Shows navigation links for users (Home, Standups, Attendance).
+ * - Displays user/admin profile avatar with a dropdown menu for profile actions.
+ * - Allows users to edit their profile or log out.
+ * - Provides access to the admin dashboard for admin users.
+ * - Handles authentication state and navigation.
+ *
+ * Dependencies:
+ * - React Router for navigation.
+ * - Firebase for authentication.
+ * - Custom hooks for user and admin authentication context.
+ * - UI components for dropdown menus and profile editing.
+ *
+ * @component
+ */
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,7 +30,7 @@ import { useUserAuth } from "@/context/UserAuthContext";
 import { auth } from "@/integrations/firebase/client";
 import { cn } from "@/lib/utils";
 import { signOut } from "firebase/auth";
-import { LayoutDashboard, LogOut, UserCircle } from "lucide-react"; // Import icons
+import { LayoutDashboard, LogOut, UserCircle, Menu } from "lucide-react"; // Added Menu icon
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import ProfileEditor from "./ProfileEditor";
@@ -47,13 +67,45 @@ export default function AppNavbar() {
     <header className="w-full bg-background border-b sticky top-0 z-50">
       <div className="container mx-auto px-4">
         <div className="flex items-center justify-between h-16">
-          {/* Logo / App Name */}
-          <Link to="/" className="flex items-center gap-2 text-xl font-bold">
-            <LayoutDashboard className="h-6 w-6" />
-            <span>Standup-Sync</span>
-          </Link>
+          {/* Left section: Mobile menu + Logo */}
+          <div className="flex items-center gap-4">
+            {/* Mobile menu button (hidden on desktop) */}
+            <div className="md:hidden">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="p-2 rounded-md text-foreground hover:bg-muted"
+                    aria-label="Open navigation menu"
+                  >
+                    <Menu className="h-6 w-6" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="mt-2 w-48">
+                  {userLinks.map(({ path, label }) => (
+                    <DropdownMenuItem key={path} asChild>
+                      <Link
+                        to={path}
+                        className={cn(
+                          "w-full",
+                          pathname === path && "font-semibold"
+                        )}
+                      >
+                        {label}
+                      </Link>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
 
-          {/* Navigation Links */}
+            {/* Logo / App Name */}
+            <Link to="/" className="flex items-center gap-2 text-xl font-bold">
+              <LayoutDashboard className="h-6 w-6" />
+              <span>Standup-Sync</span>
+            </Link>
+          </div>
+
+          {/* Navigation Links (hidden on mobile) */}
           <nav className="hidden md:flex items-center gap-2">
             {userLinks.map(({ path, label }) => (
               <Link

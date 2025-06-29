@@ -1,4 +1,25 @@
-import React, { useEffect, useState } from "react";
+/**
+ * AdminEmployeeDetail
+ *
+ * Displays a detailed feedback dashboard for a specific employee, including quantitative and qualitative feedback,
+ * charts, and AI-generated summaries. Allows filtering feedback data by day, month, custom date range, or full history.
+ * Fetches employee details and feedback summary from Firebase and Cloud Functions.
+ *
+ * Features:
+ * - Fetches and displays employee name and ID.
+ * - Provides filter controls for daily, monthly, range, and full history views.
+ * - Renders feedback data as bar or line charts using Chart.js.
+ * - Shows AI-generated summaries for positive feedback and areas for improvement.
+ * - Responsive design for mobile and desktop.
+ * - Handles loading and error states.
+ *
+ * Dependencies:
+ * - React, React Router, Firebase, Chart.js, Framer Motion, date-fns, shadcn/ui components.
+ *
+ * @component
+ * @returns {JSX.Element} The feedback dashboard for the selected employee.
+ */
+import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import AppNavbar from "@/components/AppNavbar";
 import {
@@ -313,7 +334,7 @@ export default function AdminEmployeeDetail() {
     return (
         <div className="min-h-screen flex flex-col bg-background">
             <AppNavbar />
-            <main className="flex-1 flex flex-col items-center py-10 px-4">
+            <main className="flex-1 flex flex-col items-center py-6 md:py-10 px-3 md:px-4"> {/* Responsive padding */}
                 {/* Added motion.div for entrance animation */}
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
@@ -321,68 +342,109 @@ export default function AdminEmployeeDetail() {
                     transition={{ duration: 0.5 }}
                     className="w-full max-w-6xl"
                 >
-                    <div className="flex justify-between items-center mb-6">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-4 md:mb-6 gap-3 md:gap-0"> {/* Responsive layout */}
                         <div>
-                            <h1 className="text-3xl font-bold">Feedback Dashboard</h1>
-
+                            <h1 className="text-2xl md:text-3xl font-bold">Feedback Dashboard</h1> {/* Responsive text */}
                             {/* --- THIS IS THE KEY CHANGE TO THE DISPLAY --- */}
                             {employeeData ? (
-                                <p className="text-muted-foreground">
+                                <p className="text-muted-foreground text-sm md:text-base"> {/* Responsive text */}
                                     Viewing data for: <strong>{employeeData.name}</strong> (ID: {employeeData.employeeId})
                                 </p>
                             ) : (
-                                <p className="text-muted-foreground">Loading employee details...</p>
+                                <p className="text-muted-foreground text-sm md:text-base">Loading employee details...</p>
                             )}
-
                         </div>
-                        <Button variant="outline" onClick={() => navigate("/admin/employees")}>Back to All Employees</Button>
+                        <Button
+                            variant="outline"
+                            onClick={() => navigate("/admin/employees")}
+                            className="w-full md:w-auto" // Full width on mobile
+                        >
+                            Back to All Employees
+                        </Button>
                     </div>
 
-                    <Card className="p-4 mb-6">
-                        <CardHeader><CardTitle>Filters</CardTitle></CardHeader>
-                        <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-4">
-                            <Button onClick={() => setActiveFilter({ mode: "daily", date: new Date() })}>Today</Button>
+                    <Card className="p-3 md:p-4 mb-4 md:mb-6"> {/* Responsive padding */}
+                        <CardHeader className="p-2 md:p-0 mb-2 md:mb-0"> {/* Responsive padding */}
+                            <CardTitle className="text-xl md:text-2xl">Filters</CardTitle> {/* Responsive text */}
+                        </CardHeader>
+                        <CardContent className="flex flex-col md:flex-row flex-wrap items-start md:items-center gap-3 md:gap-4 md:gap-y-3"> {/* Responsive layout */}
+                            <Button
+                                onClick={() => setActiveFilter({ mode: "daily", date: new Date() })}
+                                className="w-full md:w-auto" // Full width on mobile
+                            >
+                                Today
+                            </Button>
 
-                            <div className="flex items-center gap-2">
-                                <Select value={String(selectedMonth)} onValueChange={(val) => setSelectedMonth(Number(val))}>
-                                    <SelectTrigger className="w-[150px]"><SelectValue placeholder="Month" /></SelectTrigger>
-                                    <SelectContent>
-                                        {[...Array(12).keys()].map(i => <SelectItem key={i} value={String(i)}>{format(new Date(0, i), 'MMMM')}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
-                                <Select value={String(selectedYear)} onValueChange={(val) => setSelectedYear(Number(val))}>
-                                    <SelectTrigger className="w-[100px]"><SelectValue placeholder="Year" /></SelectTrigger>
-                                    <SelectContent>
-                                        {[2025, 2024, 2023].map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
-                                    </SelectContent>
-                                </Select>
-                                <Button onClick={() => setActiveFilter({ mode: 'monthly', date: new Date(selectedYear, selectedMonth, 1) })}>View Month</Button>
+                            <div className="flex flex-col md:flex-row items-start md:items-center gap-2 w-full md:w-auto"> {/* Responsive layout */}
+                                <div className="flex gap-2 w-full"> {/* Full width on mobile */}
+                                    <Select value={String(selectedMonth)} onValueChange={(val) => setSelectedMonth(Number(val))}>
+                                        <SelectTrigger className="w-full md:w-[150px]"> {/* Responsive width */}
+                                            <SelectValue placeholder="Month" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {[...Array(12).keys()].map(i => <SelectItem key={i} value={String(i)}>{format(new Date(0, i), 'MMMM')}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                    <Select value={String(selectedYear)} onValueChange={(val) => setSelectedYear(Number(val))}>
+                                        <SelectTrigger className="w-full md:w-[100px]"> {/* Responsive width */}
+                                            <SelectValue placeholder="Year" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {[2025, 2024, 2023].map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                                <Button
+                                    onClick={() => setActiveFilter({ mode: 'monthly', date: new Date(selectedYear, selectedMonth, 1) })}
+                                    className="w-full md:w-auto" // Full width on mobile
+                                >
+                                    View Month
+                                </Button>
                             </div>
 
-                            <div className="flex items-center gap-2">
-                                <Popover>
-                                    <PopoverTrigger asChild>
-                                        <Button id="date" variant={"outline"} className={cn("w-[260px] justify-start text-left font-normal", !selectedDateRange && "text-muted-foreground")}>
-                                            <CalendarIcon className="mr-2 h-4 w-4" />
-                                            {selectedDateRange?.from ? (selectedDateRange.to ? <>{format(selectedDateRange.from, "LLL dd, y")} - {format(selectedDateRange.to, "LLL dd, y")}</> : format(selectedDateRange.from, "LLL dd, y")) : <span>Pick a date range</span>}
-                                        </Button>
-                                    </PopoverTrigger>
-                                    <PopoverContent className="w-auto p-0" align="start">
-                                        <Calendar
-                                            initialFocus
-                                            mode="range"
-                                            defaultMonth={selectedDateRange?.from}
-                                            selected={selectedDateRange}
-                                            onSelect={setSelectedDateRange}
-                                            numberOfMonths={2}
-                                            disabled={{ after: new Date() }}
-                                        />
-                                    </PopoverContent>
-                                </Popover>
-                                <Button onClick={() => setActiveFilter({ mode: 'range', dateRange: selectedDateRange })} disabled={!selectedDateRange?.from || !selectedDateRange?.to}>Apply Range</Button>
+                            <div className="flex flex-col md:flex-row items-start md:items-center gap-2 w-full md:w-auto"> {/* Responsive layout */}
+                                <div className="w-full md:w-auto">
+                                    <Popover>
+                                        <PopoverTrigger asChild>
+                                            <Button
+                                                id="date"
+                                                variant={"outline"}
+                                                className={cn("w-full md:w-[260px] justify-start text-left font-normal", !selectedDateRange && "text-muted-foreground")} // Responsive width
+                                            >
+                                                <CalendarIcon className="mr-2 h-4 w-4" />
+                                                {selectedDateRange?.from ? (selectedDateRange.to ? <>{format(selectedDateRange.from, "LLL dd, y")} - {format(selectedDateRange.to, "LLL dd, y")}</> : format(selectedDateRange.from, "LLL dd, y")) : <span>Pick a date range</span>}
+                                            </Button>
+                                        </PopoverTrigger>
+                                        <PopoverContent className="w-[90vw] md:w-auto p-0" align="start"> {/* Responsive width */}
+                                            <Calendar
+                                                initialFocus
+                                                mode="range"
+                                                defaultMonth={selectedDateRange?.from}
+                                                selected={selectedDateRange}
+                                                onSelect={setSelectedDateRange}
+                                                numberOfMonths={1} // Single month on mobile
+                                                disabled={{ after: new Date() }}
+                                                className="w-full"
+                                            />
+                                        </PopoverContent>
+                                    </Popover>
+                                </div>
+                                <Button
+                                    onClick={() => setActiveFilter({ mode: 'range', dateRange: selectedDateRange })}
+                                    disabled={!selectedDateRange?.from || !selectedDateRange?.to}
+                                    className="w-full md:w-auto" // Full width on mobile
+                                >
+                                    Apply Range
+                                </Button>
                             </div>
 
-                            <Button onClick={() => setActiveFilter({ mode: "full" })} variant="secondary">View Full History</Button>
+                            <Button
+                                onClick={() => setActiveFilter({ mode: "full" })}
+                                variant="secondary"
+                                className="w-full md:w-auto" // Full width on mobile
+                            >
+                                View Full History
+                            </Button>
                         </CardContent>
                     </Card>
 

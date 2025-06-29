@@ -1,16 +1,60 @@
-import React, { useState, useEffect, useCallback } from "react";
+/**
+ * The main dashboard page for regular (non-admin) users.
+ * 
+ * Displays a personalized feedback summary, attendance streak, and standup status.
+ * Allows filtering feedback data by day, month, date range, or full history.
+ * 
+ * Features:
+ * - Redirects admin users to the admin dashboard.
+ * - Fetches and displays the logged-in employee's profile.
+ * - Shows standup attendance streak and current standup status.
+ * - Fetches and visualizes feedback summary data (quantitative and qualitative) using Chart.js.
+ * - Provides filter controls for daily, monthly, range, and full-history views.
+ * - Responsive layout for mobile and desktop.
+ * 
+ * Dependencies:
+ * - React, React Router, Firebase Firestore & Functions, Chart.js, Framer Motion, date-fns, custom UI components.
+ * 
+ * @component
+ * @returns {JSX.Element} The user dashboard page.
+ */
+import { useState, useEffect, useCallback } from "react";
 import { Navigate, useNavigate } from "react-router-dom"; // Added Navigate
 import { Button } from "@/components/ui/button";
-import HomeStreakBanner from "@/components/HomeStreakBanner";
 import AppNavbar from "@/components/AppNavbar";
 import { useUserAuth } from "@/context/UserAuthContext";
 import { useAdminAuth } from '@/context/AdminAuthContext'; // Ensure correct import
 import { useAttendanceStreak } from "@/hooks/use-attendance-streak";
 import { db } from "@/integrations/firebase/client";
-import { collection, query, where, getDocs, Timestamp, limit, orderBy } from "firebase/firestore";
-import { AlertTriangle, CalendarPlus, Loader2, Sparkles, MessageSquare, Quote, Lightbulb, Calendar as CalendarIcon, Flame } from "lucide-react";
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  Timestamp,
+  limit,
+  orderBy,
+  onSnapshot,
+} from "firebase/firestore";
+import {
+  AlertTriangle,
+  Loader2,
+  Sparkles,
+  MessageSquare,
+  Quote,
+  Lightbulb,
+  Calendar as CalendarIcon,
+  Flame,
+  CheckSquare,
+} from "lucide-react";
 import { motion } from "framer-motion";
-import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardContent,
+  CardDescription,
+} from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -83,7 +127,6 @@ type ActiveFilter = {
   dateRange?: DateRange;
 };
 
-
 export default function Index() {
   const { user, loading: userAuthLoading } = useUserAuth();
   const { admin, initialized: adminInitialized } = useAdminAuth(); // Get initialization state
@@ -99,7 +142,7 @@ export default function Index() {
   const [pageError, setPageError] = useState<string | null>(null);
   const [isFeedbackLoading, setIsFeedbackLoading] = useState(false);
 
-  const [standupScheduled, setStandupScheduled] = useState<boolean | null>(null);
+  const [standupStatus, setStandupStatus] = useState<'scheduled' | 'active' | 'ended' | null>(null);
   const [summary, setSummary] = useState<FeedbackSummary | null>(null);
   const [loggedInEmployeeData, setLoggedInEmployeeData] = useState<EmployeeData | null>(null);
 
@@ -108,13 +151,9 @@ export default function Index() {
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
   const [selectedDateRange, setSelectedDateRange] = useState<DateRange | undefined>(undefined);
 
-  // Fetch employee profile and standup status
+  // Fetch employee profile
   useEffect(() => {
-    setIsPageLoading(true);
-
-    if (userAuthLoading || attendanceHookLoading) {
-      return;
-    }
+    if (userAuthLoading || attendanceHookLoading) return;
 
     if (!user?.uid) {
       setPageError("You must be logged in to view this page.");
@@ -122,9 +161,8 @@ export default function Index() {
       return;
     }
 
-    const fetchEmployeeAndStandup = async () => {
+    const fetchEmployee = async () => {
       try {
-        // Fetch employee profile
         const employeesRef = collection(db, 'employees');
         const q = query(employeesRef, where('uid', '==', user.uid));
         const querySnapshot = await getDocs(q);
@@ -140,31 +178,58 @@ export default function Index() {
         } else {
           setPageError("Could not find your employee profile. Please contact an admin.");
         }
-
-        // Check standup status
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const standupsQuery = query(
-          collection(db, "standups"),
-          where("scheduled_at", ">=", Timestamp.fromDate(today)),
-          where("scheduled_at", "<", Timestamp.fromDate(tomorrow)),
-          orderBy("scheduled_at", "desc"),
-          limit(1)
-        );
-        const standupSnapshot = await getDocs(standupsQuery);
-        setStandupScheduled(!standupSnapshot.empty);
       } catch (err) {
-        console.error("Error fetching initial data:", err);
+        console.error("Error fetching employee profile:", err);
         setPageError("Failed to load your dashboard data.");
-      } finally {
-        setIsPageLoading(false);
       }
     };
 
-    fetchEmployeeAndStandup();
+    fetchEmployee();
   }, [user, userAuthLoading, attendanceHookLoading]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setStandupStatus(null);
+      setIsPageLoading(false);
+      return;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+
+    const standupsQuery = query(
+      collection(db, "standups"),
+      where("scheduledTime", ">=", Timestamp.fromDate(today)),
+      where("scheduledTime", "<", Timestamp.fromDate(tomorrow)),
+      orderBy("scheduledTime", "desc"),
+      limit(1)
+    );
+
+    const unsubscribe = onSnapshot(
+      standupsQuery,
+      (snapshot) => {
+
+        if (snapshot.empty) {
+          setStandupStatus(null);
+        } else {
+          const data = snapshot.docs[0].data();
+          setStandupStatus(data.status as "scheduled" | "active" | "ended");
+        }
+        setIsPageLoading(false);
+      },
+      (error) => {
+        console.error("[Standup] listener error:", error);
+        setPageError("Could not load standup info.");
+        setIsPageLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user]);
+
 
   // Fetch feedback summary separately
   const fetchFeedbackSummary = useCallback(async () => {
@@ -339,7 +404,6 @@ export default function Index() {
     );
   };
 
-  // Compact attendance streak component
   const CompactAttendanceStreak = () => (
     <div className="flex items-center gap-2 bg-background p-3 rounded-lg border shadow-sm">
       <div className="flex items-center gap-2">
@@ -369,37 +433,47 @@ export default function Index() {
     <div className="min-h-screen flex flex-col bg-background">
       <AppNavbar />
       <main className="flex-1">
-        <div className="container mx-auto px-4 py-6">
+        <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6"> {/* Responsive padding */}
           {isPageLoading ? (
-            <div className="flex justify-center items-center h-[50vh] w-full">
-              <Loader2 className="h-12 w-12 animate-spin text-primary" />
+            <div className="flex justify-center items-center h-[40vh] w-full">
+              <Loader2 className="h-10 w-10 animate-spin text-primary" />
             </div>
           ) : (
             <>
               {/* Top Section: Header with Attendance Streak */}
-              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3 sm:gap-4"> {/* Responsive gap */}
                 <div>
-                  <h1 className="text-2xl font-bold">
+                  <h1 className="text-xl sm:text-2xl font-bold"> {/* Responsive text */}
                     Hello, {user?.displayName?.split(' ')[0] || 'User'}!
                   </h1>
-
                   {loggedInEmployeeData && (
-                    <div className="mt-2">
-                      <h3 className="text-lg font-semibold">Your Feedback Summary</h3>
-                      <p className="text-muted-foreground text-sm">
+                    <div className="mt-1 sm:mt-2"> {/* Responsive margin */}
+                      <h3 className="text-base sm:text-lg font-semibold">Your Feedback Summary</h3> {/* Responsive text */}
+                      <p className="text-muted-foreground text-xs sm:text-sm"> {/* Responsive text */}
                         Viewing data for: <strong>{loggedInEmployeeData.name}</strong> (ID: {loggedInEmployeeData.customEmployeeId})
                       </p>
                     </div>
                   )}
                 </div>
-
-                <div className="flex flex-col items-end gap-2">
+                <div className="flex flex-col items-start md:items-end gap-2 mt-2 md:mt-0"> {/* Responsive alignment */}
                   <CompactAttendanceStreak />
-
-                  {!pageError && standupScheduled === false && (
-                    <div className="flex items-center gap-2 text-destructive text-sm bg-destructive/10 p-2 rounded-lg">
+                  {/* Standup status indicators */}
+                  {!pageError && standupStatus === 'scheduled' && (
+                    <div className="flex items-center gap-2 text-blue-700 text-xs sm:text-sm bg-blue-50 p-2 rounded-lg border border-blue-200 w-full md:w-auto"> {/* Responsive width */}
+                      <CalendarIcon className="h-4 w-4" />
+                      <span>Standup is scheduled for today!</span>
+                    </div>
+                  )}
+                  {!pageError && standupStatus === 'ended' && (
+                    <div className="flex items-center gap-2 text-green-700 text-xs sm:text-sm bg-green-50 p-2 rounded-lg border border-green-200 w-full md:w-auto"> {/* Responsive width */}
+                      <CheckSquare className="h-4 w-4" />
+                      <span>Standup has been completed.</span>
+                    </div>
+                  )}
+                  {!pageError && standupStatus === null && !isPageLoading && (
+                    <div className="flex items-center gap-2 text-orange-700 text-xs sm:text-sm bg-orange-50 p-2 rounded-lg border border-orange-200 w-full md:w-auto"> {/* Responsive width */}
                       <AlertTriangle className="h-4 w-4" />
-                      <span>No standup scheduled today</span>
+                      <span>No standup scheduled today.</span>
                     </div>
                   )}
                 </div>
@@ -410,52 +484,57 @@ export default function Index() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3 }}
-                className="mt-6"
+                className="mt-4 sm:mt-6"
               >
-                <Card className="p-4">
-                  <CardHeader className="p-0 pb-4">
-                    <CardTitle className="text-lg">Filters</CardTitle>
+                <Card className="p-3 sm:p-4"> {/* Responsive padding */}
+                  <CardHeader className="p-0 pb-3 sm:pb-4"> {/* Responsive padding */}
+                    <CardTitle className="text-base sm:text-lg">Filters</CardTitle> {/* Responsive text */}
                   </CardHeader>
-                  <CardContent className="p-0 flex flex-wrap items-center gap-4">
-                    <div className="flex items-center gap-2">
+                  <CardContent className="p-0 flex flex-wrap items-center gap-2 sm:gap-4"> {/* Responsive gap */}
+                    {/* Today button */}
+                    <div className="w-full sm:w-auto">
                       <Button
                         onClick={() => setActiveFilter({ mode: "daily", date: new Date() })}
                         variant={activeFilter.mode === "daily" ? "default" : "outline"}
                         size="sm"
+                        className="w-full sm:w-auto" // Full width on mobile
                       >
                         Today
                       </Button>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <Select
-                        value={String(selectedMonth)}
-                        onValueChange={(val) => setSelectedMonth(Number(val))}
-                      >
-                        <SelectTrigger className="w-[120px]">
-                          <SelectValue placeholder="Month" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {[...Array(12).keys()].map(i => (
-                            <SelectItem key={i} value={String(i)}>
-                              {format(new Date(0, i), 'MMMM')}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Select
-                        value={String(selectedYear)}
-                        onValueChange={(val) => setSelectedYear(Number(val))}
-                      >
-                        <SelectTrigger className="w-[90px]">
-                          <SelectValue placeholder="Year" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {[2025, 2024, 2023].map(y => (
-                            <SelectItem key={y} value={String(y)}>{y}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                    {/* Month selector */}
+                    <div className="w-full sm:w-auto flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-2"> {/* Responsive layout */}
+                      <div className="flex w-full gap-2">
+                        <Select
+                          value={String(selectedMonth)}
+                          onValueChange={(val) => setSelectedMonth(Number(val))}
+                        >
+                          <SelectTrigger className="w-full sm:w-[120px]"> {/* Responsive width */}
+                            <SelectValue placeholder="Month" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {[...Array(12).keys()].map(i => (
+                              <SelectItem key={i} value={String(i)}>
+                                {format(new Date(0, i), 'MMMM')}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={String(selectedYear)}
+                          onValueChange={(val) => setSelectedYear(Number(val))}
+                        >
+                          <SelectTrigger className="w-full sm:w-[90px]"> {/* Responsive width */}
+                            <SelectValue placeholder="Year" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {[2025, 2024, 2023].map(y => (
+                              <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                       <Button
                         onClick={() => setActiveFilter({
                           mode: 'monthly',
@@ -463,42 +542,47 @@ export default function Index() {
                         })}
                         variant={activeFilter.mode === "monthly" ? "default" : "outline"}
                         size="sm"
+                        className="w-full sm:w-auto" // Full width on mobile
                       >
                         View Month
                       </Button>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button
-                            id="date"
-                            variant={"outline"}
-                            className={cn("w-[220px] justify-start text-left font-normal text-sm", !selectedDateRange && "text-muted-foreground")}
-                            size="sm"
-                          >
-                            <CalendarIcon className="mr-2 h-4 w-4" />
-                            {selectedDateRange?.from ?
-                              (selectedDateRange.to ?
-                                <>{format(selectedDateRange.from, "LLL dd")} - {format(selectedDateRange.to, "LLL dd, y")}</> :
-                                format(selectedDateRange.from, "LLL dd, y")
-                              ) :
-                              <span>Pick a date range</span>
-                            }
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-auto p-0" align="start">
-                          <Calendar
-                            initialFocus
-                            mode="range"
-                            defaultMonth={selectedDateRange?.from}
-                            selected={selectedDateRange}
-                            onSelect={setSelectedDateRange}
-                            numberOfMonths={2}
-                            disabled={{ after: new Date() }}
-                          />
-                        </PopoverContent>
-                      </Popover>
+                    {/* Date range selector */}
+                    <div className="w-full sm:w-auto flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-2"> {/* Responsive layout */}
+                      <div className="w-full">
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              id="date"
+                              variant={"outline"}
+                              className={cn("w-full justify-start text-left font-normal text-sm", !selectedDateRange && "text-muted-foreground")} // Full width
+                              size="sm"
+                            >
+                              <CalendarIcon className="mr-2 h-4 w-4" />
+                              {selectedDateRange?.from ?
+                                (selectedDateRange.to ?
+                                  <>{format(selectedDateRange.from, "LLL dd")} - {format(selectedDateRange.to, "LLL dd, y")}</> :
+                                  format(selectedDateRange.from, "LLL dd, y")
+                                ) :
+                                <span>Pick a date range</span>
+                              }
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[90vw] sm:w-auto p-0" align="start"> {/* Responsive width */}
+                            <Calendar
+                              initialFocus
+                              mode="range"
+                              defaultMonth={selectedDateRange?.from}
+                              selected={selectedDateRange}
+                              onSelect={setSelectedDateRange}
+                              numberOfMonths={1} // Single month on mobile
+                              disabled={{ after: new Date() }}
+                              className="w-full"
+                            />
+                          </PopoverContent>
+                        </Popover>
+                      </div>
                       <Button
                         onClick={() => setActiveFilter({
                           mode: 'range',
@@ -507,16 +591,19 @@ export default function Index() {
                         disabled={!selectedDateRange?.from || !selectedDateRange?.to}
                         variant={activeFilter.mode === "range" ? "default" : "outline"}
                         size="sm"
+                        className="w-full sm:w-auto" // Full width on mobile
                       >
                         Apply Range
                       </Button>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    {/* Full history button */}
+                    <div className="w-full sm:w-auto">
                       <Button
                         onClick={() => setActiveFilter({ mode: "full" })}
                         variant={activeFilter.mode === "full" ? "default" : "outline"}
                         size="sm"
+                        className="w-full sm:w-auto" // Full width on mobile
                       >
                         View Full History
                       </Button>
@@ -530,7 +617,7 @@ export default function Index() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.3, delay: 0.1 }}
-                className="mt-6"
+                className="mt-4 sm:mt-6"
               >
                 {renderFeedbackDashboardContent()}
               </motion.div>

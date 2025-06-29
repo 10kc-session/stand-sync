@@ -1,4 +1,14 @@
-import React from "react";
+/**
+ * Employees page component for managing and displaying a list of employees.
+ *
+ * - Fetches employees from the Firestore "employees" collection, ordered by name.
+ * - Allows adding new employees via a form, which updates Firestore and refreshes the list.
+ * - Uses React Query for data fetching and mutation, and react-hook-form for form handling.
+ * - Displays feedback using a toast notification system.
+ *
+ * @component
+ * @returns {JSX.Element} The rendered Employees management page.
+ */
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";

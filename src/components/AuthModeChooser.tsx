@@ -1,4 +1,11 @@
-
+/**
+ * A component that allows the user to choose between "Team Member" and "Admin" authentication modes.
+ *
+ * @param onChoose - Callback function invoked with the selected mode ("TeamMember" or "Admin").
+ *
+ * @example
+ * <AuthModeChooser onChoose={handleChooseMode} />
+ */
 import React from "react";
 import { Button } from "@/components/ui/button";
 

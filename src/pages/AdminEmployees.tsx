@@ -1,3 +1,31 @@
+/**
+ * AdminEmployees page component for managing employee records in the admin dashboard.
+ *
+ * Features:
+ * - Displays a searchable, sortable list of employees.
+ * - Allows inline editing of employee details (name, email, employeeId, feedbackSheetUrl).
+ * - Supports promoting an employee to admin via Firebase Cloud Function.
+ * - Supports deleting an employee (removes both Firestore profile and Auth account).
+ * - Provides UI feedback for loading, errors, and actions using toasts.
+ * - Uses Firebase Firestore for data storage and retrieval.
+ * - Uses React Router for navigation and protected route logic.
+ * - Responsive and accessible UI with support for dark mode.
+ *
+ * @component
+ * @returns {JSX.Element} The rendered AdminEmployees page.
+ *
+ * @remarks
+ * - Only accessible to authenticated admins.
+ * - Employee list is fetched from the "employees" Firestore collection.
+ * - Promoting to admin and deleting employees are irreversible actions.
+ * - Inline editing is available in "Edit Mode".
+ *
+ * @see {@link useAdminAuth} for admin authentication context.
+ * @see {@link fetchEmployees} for Firestore data fetching logic.
+ * @see {@link updateEmployee} for Firestore update logic.
+ * @see {@link handleMakeAdmin} for admin promotion logic.
+ * @see {@link handleDeleteEmployee} for employee deletion logic.
+ */
 // src/pages/AdminEmployees.tsx
 
 import React from "react";
@@ -86,7 +114,7 @@ export default function AdminEmployees() {
   // --- CHANGED: The state for form data now includes employeeId ---
   const [editFormData, setEditFormData] = React.useState<{ [key: string]: EditableEmployeeData; }>({});
   const [isUpdating, setIsUpdating] = React.useState(false);
-  const [isDeleting, setIsDeleting] = React.useState(false);
+  const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [isPromoting, setIsPromoting] = React.useState(false);
 
   const loadEmployees = React.useCallback(() => {
@@ -206,13 +234,15 @@ export default function AdminEmployees() {
     }
   };
 
-  const handleDeleteEmployee = async (id: string) => {
-    setIsDeleting(true);
+  async function handleDeleteEmployee(uid: string) {
+    setDeletingId(uid);
     try {
-      await deleteEmployee(id);
+      const functions = getFunctions();
+      const deleteEmp = httpsCallable(functions, "deleteEmployee");
+      await deleteEmp({ uid });
       toast({
         title: "Success",
-        description: "Employee deleted successfully!",
+        description: "User account and profile deleted.",
         className: "bg-green-500 text-white",
       });
       loadEmployees();
@@ -223,7 +253,7 @@ export default function AdminEmployees() {
         variant: "destructive",
       });
     } finally {
-      setIsDeleting(false);
+      setDeletingId(null);
     }
   };
 
@@ -400,8 +430,18 @@ export default function AdminEmployees() {
                                 </AlertDialog>
                                 <AlertDialog>
                                   <AlertDialogTrigger asChild>
-                                    <Button variant="destructive" size="sm"><Trash2 className="h-4 w-4" /></Button>
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      disabled={deletingId === emp.id}
+                                      className="border-red-600 hover:bg-red-100 hover:text-red-700"
+                                    >
+                                      {deletingId === emp.id
+                                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                                        : <Trash2 className="h-4 w-4" />}
+                                    </Button>
                                   </AlertDialogTrigger>
+
                                   <AlertDialogContent>
                                     <AlertDialogHeader>
                                       <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
@@ -409,8 +449,15 @@ export default function AdminEmployees() {
                                     </AlertDialogHeader>
                                     <AlertDialogFooter>
                                       <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                      <AlertDialogAction onClick={() => handleDeleteEmployee(emp.id)} disabled={isDeleting} className="bg-destructive hover:bg-destructive/90">
-                                        {isDeleting ? "Deleting..." : "Delete"}
+                                      <AlertDialogAction
+                                        onClick={() => handleDeleteEmployee(emp.id)}
+                                        disabled={deletingId === emp.id}
+                                        className="bg-destructive hover:bg-destructive/90 flex items-center justify-center"
+                                      >
+                                        {deletingId === emp.id
+                                          ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                          : <Trash2 className="h-4 w-4 mr-2" />}
+                                        {deletingId === emp.id ? "Deleting…" : "Delete"}
                                       </AlertDialogAction>
                                     </AlertDialogFooter>
                                   </AlertDialogContent>

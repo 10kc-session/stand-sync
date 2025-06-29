@@ -1,5 +1,29 @@
+/**
+ * ProfileEditor component allows users to edit their profile information,
+ * including display name and avatar image. It displays a dialog with input fields
+ * for the user's name and avatar, provides image preview, validates file type and size,
+ * uploads the new avatar to Firebase Storage, and updates the user's profile using Firebase Auth.
+ *
+ * @param {Object} props - Component props.
+ * @param {boolean} props.open - Controls whether the dialog is open.
+ * @param {(open: boolean) => void} props.onOpenChange - Callback to handle dialog open state changes.
+ *
+ * @returns {JSX.Element} The profile editor dialog component.
+ *
+ * @remarks
+ * - Uses Firebase for authentication and storage.
+ * - Shows toast notifications for success, errors, and validation feedback.
+ * - Resets state when dialog is opened.
+ * - Limits avatar uploads to images under 2MB.
+ */
 import React, { useState, useEffect } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
@@ -15,51 +39,73 @@ type Props = {
   onOpenChange: (open: boolean) => void;
 };
 
-const ProfileEditor: React.FC<Props> = ({ open, onOpenChange }) => {
-  const { user, loading } = useUserAuth(); // Use our Firebase auth hook
+export default function ProfileEditor({ open, onOpenChange }: Props) {
+  const { user, loading: userLoading } = useUserAuth();
   const [name, setName] = useState(user?.displayName || "");
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
 
+  // Reset when dialog opens
   useEffect(() => {
-    // When the dialog opens, reset the state to the current user's profile
     if (open) {
       setName(user?.displayName || "");
       setAvatarFile(null);
+      setAvatarPreview(null);
     }
   }, [open, user]);
 
-  const handleSave = async () => {
-    if (!user) return; // Should not happen if the dialog is open, but a good guard clause
+  // Generate preview URL
+  useEffect(() => {
+    if (!avatarFile) {
+      setAvatarPreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(avatarFile);
+    setAvatarPreview(url);
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [avatarFile]);
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] || null;
+    if (file) {
+      if (!file.type.startsWith("image/")) {
+        toast({ title: "Invalid file", description: "Please select an image.", variant: "destructive" });
+        return;
+      }
+      if (file.size > 2 * 1024 * 1024) {
+        toast({ title: "File too large", description: "Max size is 2MB.", variant: "destructive" });
+        return;
+      }
+    }
+    setAvatarFile(file);
+  };
+
+  const handleSave = async () => {
+    if (!user) return;
     setSaving(true);
-    let newPhotoURL = user.photoURL; // Start with the existing photo URL
+    let newPhotoURL = user.photoURL;
 
     try {
-      // 1. If a new avatar file was selected, upload it to Firebase Storage
       if (avatarFile) {
-        // Create a storage reference (e.g., 'avatars/user-uid/avatar.png')
         const storageRef = ref(storage, `avatars/${user.uid}/${avatarFile.name}`);
-
-        // Upload the file
         const snapshot = await uploadBytes(storageRef, avatarFile);
-
-        // Get the public URL of the uploaded file
         newPhotoURL = await getDownloadURL(snapshot.ref);
       }
 
-      // 2. Update the user's profile in Firebase Authentication
-      await updateProfile(user, {
-        displayName: name,
-        photoURL: newPhotoURL,
-      });
+      if (name !== user.displayName || newPhotoURL !== user.photoURL) {
+        await updateProfile(user, { displayName: name, photoURL: newPhotoURL });
+        toast({ title: "Profile updated!" });
+      } else {
+        toast({ title: "No changes made" });
+      }
 
-      toast({ title: "Profile updated successfully!" });
-      onOpenChange(false); // Close the dialog on success
-
-    } catch (error: any) {
-      toast({ title: "Profile update failed", description: error.message, variant: "destructive" });
+      onOpenChange(false);
+    } catch (err: any) {
+      toast({ title: "Update failed", description: err.message, variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -73,36 +119,46 @@ const ProfileEditor: React.FC<Props> = ({ open, onOpenChange }) => {
         </DialogHeader>
         <div className="flex flex-col gap-4">
           {/* Avatar Preview */}
-          {user?.photoURL && (
+          <div className="mx-auto">
             <img
-              src={user.photoURL}
-              alt="avatar"
-              className="mx-auto w-24 h-24 rounded-full object-cover border mb-2"
+              src={avatarPreview ?? user?.photoURL ?? "/fallback-avatar.png"}
+              alt="Avatar preview"
+              className="w-24 h-24 rounded-full object-cover border"
             />
-          )}
+          </div>
+
           <Input
             type="file"
             accept="image/*"
-            onChange={e => setAvatarFile(e.target.files?.[0] || null)}
+            onChange={handleFileChange}
             disabled={saving}
           />
+
           <Input
             type="text"
             value={name}
-            onChange={e => setName(e.target.value)}
+            onChange={(e) => setName(e.target.value)}
             placeholder="Full Name"
-            disabled={saving}
+            disabled={saving || userLoading}
           />
         </div>
+
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancel</Button>
-          <Button onClick={handleSave} disabled={saving || loading}>
-            {saving ? "Saving..." : "Save"}
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSave}
+            disabled={saving || userLoading}
+          >
+            {saving ? "Saving…" : "Save"}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
-};
-
-export default ProfileEditor;
+}

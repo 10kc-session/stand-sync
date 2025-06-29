@@ -1,3 +1,15 @@
+/**
+ * AdminLogin component handles the admin login flow.
+ *
+ * - Redirects authenticated admins to the admin dashboard.
+ * - Shows a loading spinner while authentication state is being determined.
+ * - Presents a card with instructions and a button to navigate to the main sign-in page for unauthenticated users.
+ *
+ * Uses:
+ * - `useAdminAuth` context to access admin authentication state and loading status.
+ * - `useNavigate` from react-router-dom for navigation.
+ * - UI components from the local project and Lucide React for the loading spinner.
+ */
 // src/pages/AdminLogin.tsx
 
 import React, { useEffect } from "react";
@@ -6,20 +18,26 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAdminAuth } from "@/context/AdminAuthContext";
 import AppNavbar from "@/components/AppNavbar";
 import { Button } from "@/components/ui/button";
+import { Loader2 } from "lucide-react";   // changes
+
 
 const AdminLogin: React.FC = () => {
   const { admin, loading: adminLoading } = useAdminAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
-    // Wait until we know whether someone is signed in and is an admin
     if (adminLoading) return;
-
-    // If they are already signed in as admin, send them to /admin
-    if (admin) {
-      navigate("/admin", { replace: true });
-    }
+    if (admin) navigate("/admin", { replace: true });
   }, [admin, adminLoading, navigate]);
+
+  // ← ADD THIS:
+  if (adminLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex flex-col bg-background">

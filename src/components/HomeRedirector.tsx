@@ -1,48 +1,42 @@
+/**
+ * Redirects users to the appropriate home page based on their authentication status.
+ *
+ * - If authentication state is still loading, displays a loading indicator.
+ * - If the user is an admin, redirects to the admin dashboard (`/admin`).
+ * - If the user is a regular user, redirects to the user home page (`/index`).
+ * - If no user is authenticated, redirects to the authentication page (`/auth`).
+ *
+ * Utilizes `useUserAuth` and `useAdminAuth` context hooks to determine authentication state.
+ *
+ * @component
+ */
 import { Navigate } from "react-router-dom";
 import { useUserAuth } from "@/context/UserAuthContext";
 import { useAdminAuth } from "@/context/AdminAuthContext";
-import Index from "@/pages/Index";
 
 const HomeRedirector = () => {
-    const { user, loading: userLoading } = useUserAuth();
-    // --- CHANGE 1: Only get 'admin' from the context ---
-    const { admin } = useAdminAuth();
+    const { user, loading: userLoading, initialized: userInit } = useUserAuth();
+    const { admin, loading: adminLoading, initialized: adminInit } = useAdminAuth();
 
-    // --- CHANGE 2: The true loading state depends ONLY on the primary user auth check ---
-    const isLoading = userLoading;
+    const isLoading = userLoading || adminLoading || !userInit || !adminInit;
 
     if (isLoading) {
-        // While checking authentication, show a full-page loading indicator
         return (
             <div className="min-h-screen flex items-center justify-center">
-                Loading...
+                Loading…
             </div>
         );
     }
 
-    // Once loading is complete, make a decision
     if (admin) {
-        // If the user is an admin, redirect them immediately to the admin dashboard
         return <Navigate to="/admin" replace />;
     }
 
-    if (user && !admin) {
-        // If it's a regular, non-admin user, show them the normal Index/Home page
-        return <Index />;
+    if (user) {
+        return <Navigate to="/index" replace />;
     }
 
-    // This check will now correctly handle the case after loading is false
-    if (!user) {
-        // If there is no user at all, redirect to the login page
-        return <Navigate to="/auth" replace />;
-    }
-
-    // Fallback case, should not be reached in normal flow
-    return (
-        <div className="min-h-screen flex items-center justify-center">
-            Loading...
-        </div>
-    );
+    return <Navigate to="/auth" replace />;
 };
 
 export default HomeRedirector;

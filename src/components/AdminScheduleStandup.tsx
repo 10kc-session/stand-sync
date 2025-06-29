@@ -1,13 +1,33 @@
-import React, { useState, useEffect } from "react";
+/**
+ * AdminScheduleStandup component allows admin users to schedule new standup meetings
+ * and view all scheduled standups.
+ *
+ * Features:
+ * - Displays a form for selecting a time and scheduling a standup for today.
+ * - Lists all scheduled standups, ordered by scheduled time.
+ * - Prevents scheduling standups in the past.
+ * - Only authenticated admins can schedule standups.
+ * - Shows feedback via toast notifications for success and error cases.
+ *
+ * Uses Firebase Firestore for data storage and retrieval.
+ *
+ * @component
+ * @returns {JSX.Element} The rendered AdminScheduleStandup card UI.
+ *
+ * @remarks
+ * Requires the user to be authenticated as an admin via `useAdminAuth`.
+ * Relies on Firebase client integration and UI components from the local project.
+ */
+// src/components/AdminScheduleStandup.tsx
+
+import React, { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/use-toast";
-import { useUserAuth } from "@/context/UserAuthContext";
 import { useAdminAuth } from "@/context/AdminAuthContext";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 
-// --- Firebase Imports ---
-import { db } from "@/integrations/firebase/client";
+// Firebase imports
 import {
   collection,
   addDoc,
@@ -15,152 +35,172 @@ import {
   orderBy,
   query,
   Timestamp,
-  serverTimestamp
+  serverTimestamp,
 } from "firebase/firestore";
+import { db } from "@/integrations/firebase/client";
 
-// --- Type Definition for Firestore ---
 type Standup = {
   id: string;
   scheduled_at: Timestamp;
-  created_at: Timestamp;
+  created_at?: Timestamp;
+  created_by?: string;
 };
 
-type AdminScheduleStandupProps = {
-  onAfterSchedule?: () => void;
-};
-
-export default function AdminScheduleStandup({ onAfterSchedule }: AdminScheduleStandupProps) {
-  const [time, setTime] = useState("");
-  const [standups, setStandups] = useState<Standup[]>([]);
-  const [loading, setLoading] = useState(false);
-  const { user } = useUserAuth();
+export default function AdminScheduleStandup() {
   const { admin } = useAdminAuth();
   const { toast } = useToast();
 
-  const fetchStandups = async () => {
+  const [time, setTime] = useState("");
+  const [standups, setStandups] = useState<Standup[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Fetch all scheduled standups, memoized so effect deps are stable
+  const fetchStandups = useCallback(async () => {
     setLoading(true);
     try {
-      const standupsCollection = collection(db, "standups");
-      const q = query(standupsCollection, orderBy("scheduled_at", "asc"));
-      const querySnapshot = await getDocs(q);
-      const standupData = querySnapshot.docs.map(
-        (doc) => ({ id: doc.id, ...doc.data() } as Standup)
+      const standupsRef = collection(db, "standups");
+      const q = query(standupsRef, orderBy("scheduled_at", "asc"));
+      const snap = await getDocs(q);
+      setStandups(
+        snap.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        } as Standup))
       );
-      setStandups(standupData);
-    } catch (error: any) {
-      toast({
-        title: "Error loading standups",
-        description: error.message,
-        variant: "destructive",
-      });
-      console.error("Error fetching standups:", error);
+    } catch (err: any) {
+      console.error("Error fetching standups:", err);
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
-  };
+  }, [toast]);
 
   useEffect(() => {
     fetchStandups();
-  }, []);
+  }, [fetchStandups]);
 
   const handleSchedule = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!user && !admin) {
-      toast({ title: "Not logged in", variant: "destructive" });
+    // Only admins may schedule
+    if (!admin) {
+      toast({ title: "Forbidden", description: "Only admins can schedule standups.", variant: "destructive" });
       return;
     }
     if (!time) {
-      toast({ title: "Please select a time", variant: "destructive" });
+      toast({ title: "Invalid", description: "Please select a time.", variant: "destructive" });
       return;
     }
+
     setLoading(true);
-
-    const today = new Date();
-    const [hours, minutes] = time.split(":").map(Number);
-    today.setHours(hours, minutes, 0, 0);
-
-    const insertObj: any = {
-      scheduled_at: Timestamp.fromDate(today),
-      created_at: serverTimestamp(),
-    };
-
-    // --- THIS IS THE CORRECTED LINE ---
-    const creatorId = user ? user.uid : admin ? admin.email : null;
-    if (creatorId) {
-      insertObj.created_by = creatorId;
-    }
-
     try {
+      // Build the scheduled Date
+      const [hours, minutes] = time.split(":").map(Number);
+      const scheduledDate = new Date();
+      scheduledDate.setHours(hours, minutes, 0, 0);
+
+      // Prevent scheduling in the past (for today)
+      const nowClean = new Date();
+      nowClean.setSeconds(0, 0);
+      if (scheduledDate.getTime() < nowClean.getTime()) {
+        toast({ title: "Invalid", description: "Cannot schedule a past time.", variant: "destructive" });
+        return;
+      }
+
+      // Prepare Firestore insert
+      const insertObj: any = {
+        scheduled_at: Timestamp.fromDate(scheduledDate),
+        created_at: serverTimestamp(),
+        created_by: admin.uid,
+      };
+
       await addDoc(collection(db, "standups"), insertObj);
-      toast({ title: "Standup Scheduled" });
+      toast({ title: "Success", description: "Standup scheduled." });
       setTime("");
       await fetchStandups();
-      if (onAfterSchedule) onAfterSchedule();
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
-      console.error("Insert error:", error);
+    } catch (err: any) {
+      console.error("Error scheduling standup:", err);
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
+  // Helper to set time input to now
   const setToNowTime = () => {
     const now = new Date();
-    const hour = now.getHours().toString().padStart(2, "0");
-    const minute = now.getMinutes().toString().padStart(2, "0");
-    setTime(`${hour}:${minute}`);
+    const hh = now.getHours().toString().padStart(2, "0");
+    const mm = now.getMinutes().toString().padStart(2, "0");
+    setTime(`${hh}:${mm}`);
   };
 
   return (
-    <Card className="w-full mt-6 md:max-w-lg">
+    <Card className="w-full max-w-lg mx-auto mt-8">
       <CardHeader>
         <CardTitle>Schedule Standup</CardTitle>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSchedule} className="flex gap-2 items-center mb-4">
-          <div>
+        <form onSubmit={handleSchedule} className="flex flex-wrap items-center gap-2 mb-6">
+          <div className="flex items-center gap-2">
             <span>Today at:</span>
             <Input
               type="time"
               value={time}
-              onChange={e => setTime(e.target.value)}
+              onChange={(e) => setTime(e.target.value)}
               required
-              className="ml-2 w-28"
-              min="06:00"
-              max="23:00"
+              className="w-28"
+              min="00:00"
+              max="23:59"
               data-testid="schedule-time-input"
             />
-            <Button type="button" size="sm" className="ml-2" variant="ghost" onClick={setToNowTime} data-testid="now-btn">
+            <Button size="sm" variant="ghost" onClick={setToNowTime} data-testid="now-btn">
               Now
             </Button>
           </div>
-          <Button type="submit" disabled={loading} data-testid="add-btn">Add</Button>
+          <Button type="submit" disabled={loading} data-testid="add-btn">
+            {loading ? "Scheduling..." : "Add"}
+          </Button>
         </form>
 
-        <h4 className="font-semibold mb-2">All Scheduled Standups:</h4>
+        <h4 className="font-semibold mb-2">All Scheduled Standups</h4>
         {loading ? (
           <div>Loading...</div>
         ) : (
-          <ul className="space-y-2">
-            {standups.map(su => (
-              <li key={su.id} className="flex justify-between border-b py-2">
-                <span>
-                  {su.scheduled_at.toDate().toLocaleString(undefined, {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    day: "numeric",
-                    month: "short",
-                  })}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {su.created_at?.toDate().toLocaleDateString()}
-                </span>
-              </li>
-            ))}
-            {standups.length === 0 && <li className="text-muted-foreground">No standups scheduled.</li>}
+          <ul className="space-y-3">
+            {standups.length ? (
+              standups.map((su) => (
+                <li key={su.id} className="flex justify-between items-center border-b pb-2">
+                  <div>
+                    <div>
+                      <strong>
+                        {su.scheduled_at.toDate().toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </strong>{" "}
+                      on{" "}
+                      {su.scheduled_at.toDate().toLocaleDateString(undefined, {
+                        day: "numeric",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                    </div>
+                    {su.created_by && (
+                      <div className="text-xs text-muted-foreground">
+                        Scheduled by: {su.created_by}
+                      </div>
+                    )}
+                  </div>
+                  {su.created_at && (
+                    <span className="text-xs text-muted-foreground">
+                      {su.created_at.toDate().toLocaleDateString()}
+                    </span>
+                  )}
+                </li>
+              ))
+            ) : (
+              <li className="text-muted-foreground">No standups scheduled.</li>
+            )}
           </ul>
         )}
       </CardContent>

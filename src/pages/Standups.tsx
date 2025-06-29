@@ -1,7 +1,42 @@
-// src/pages/Standups.tsx
+/**
+ * Standups Page
+ *
+ * This page manages the scheduling, activation, attendance marking, and completion of daily standup meetings for a team.
+ * It supports both admin and regular user roles, providing real-time updates and attendance tracking via Firebase Firestore.
+ *
+ * Features:
+ * - Admins can schedule a standup for today, specifying date and time.
+ * - Real-time updates for standup status: scheduled, active, or ended.
+ * - Admins can start the standup, mark attendance for each employee, and end the standup.
+ * - Attendance is saved in Firestore and displayed after the standup ends.
+ * - Regular users can view standup status and attendance results.
+ *
+ * Components:
+ * - `ScheduleStandupForm`: Form for admins to schedule a standup.
+ * - Main content dynamically renders based on standup status and user role.
+ *
+ * State Management:
+ * - `standup`: Current standup document for today.
+ * - `employees`: List of employees fetched from Firestore.
+ * - `tempAttendance`: Temporary attendance state for marking during an active standup.
+ * - `savedAttendance`: Attendance records fetched after standup ends.
+ * - Loading and updating states for UI feedback.
+ *
+ * Firebase Integration:
+ * - Uses Firestore for standup, employee, and attendance data.
+ * - Real-time listeners for standup document.
+ * - Batch writes for attendance records.
+ *
+ * UI:
+ * - Uses Shadcn UI components, Framer Motion for animations, and Lucide icons.
+ * - Responsive and accessible design.
+ *
+ * @module Standups
+ * @file Standups.tsx
+ */
 
 import { useEffect, useState, useCallback } from "react";
-import { format, setHours, setMinutes } from "date-fns"; // Added setHours, setMinutes
+import { format, setHours, setMinutes, startOfDay } from "date-fns"; // Added setHours, setMinutes
 
 // --- Firebase Imports ---
 import { db } from "@/integrations/firebase/client";
@@ -81,12 +116,18 @@ const ScheduleStandupForm = ({
 
     let finalScheduledDateTime = setHours(setMinutes(scheduledDate, minutes), hours);
 
-    // If the scheduled date is today, ensure the time is not in the past
     const now = new Date();
+    // --- THIS IS THE FIX ---
+    // Create a 'clean' version of the current time with no seconds/milliseconds
+    const nowClean = new Date();
+    nowClean.setSeconds(0, 0);
+    // --- END OF FIX ---
+
     const todayFormatted = format(now, "yyyy-MM-dd");
     const selectedDateFormatted = format(finalScheduledDateTime, "yyyy-MM-dd");
 
-    if (selectedDateFormatted === todayFormatted && finalScheduledDateTime.getTime() < now.getTime()) {
+    // Now, compare against the 'clean' time
+    if (selectedDateFormatted === todayFormatted && finalScheduledDateTime.getTime() < nowClean.getTime()) {
       toast({ title: "Error", description: "Scheduled time cannot be in the past for today's standup.", variant: "destructive" });
       return;
     }
@@ -138,7 +179,7 @@ const ScheduleStandupForm = ({
               selected={scheduledDate}
               onSelect={setScheduledDate}
               initialFocus
-              disabled={(date) => date < new Date() && format(date, 'yyyy-MM-dd') !== format(new Date(), 'yyyy-MM-dd')} // Disable past dates, allow today
+              disabled={(date) => startOfDay(date) < startOfDay(new Date())}
             />
           </PopoverContent>
         </Popover>
@@ -286,6 +327,7 @@ export default function Standups() {
         batch.set(attendanceDocRef, {
           standup_id: todayDocId,
           employee_id: emp.id,
+          employee_name: emp.name, // Store employee name for easier reference
           status: attendanceStatus,
           scheduled_at: standup.scheduledTime, // Store the scheduled time with attendance
           markedAt: serverTimestamp(), // When this specific record was marked

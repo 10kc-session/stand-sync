@@ -1,7 +1,26 @@
+/**
+ * LandingPage component - The main landing page for the Standup-Sync application.
+ *
+ * Features:
+ * - Hero section introducing the product and a call-to-action button.
+ * - Animated feature cards highlighting core features such as AI feedback, real-time attendance, admin controls, and Firebase integration.
+ * - "Why Stand Out" section explaining the architecture and unique benefits.
+ * - Responsive design with framer-motion animations for engaging transitions.
+ * - Custom SVG illustrations for visual appeal.
+ * - Footer with copyright.
+ *
+ * Sub-components:
+ * - FeatureCard: Displays an individual feature with icon, title, description, and action button.
+ * - BenefitItem: Lists a benefit with icon, title, and description.
+ * - FirebaseLogo, HeroIllustration, StandOutIllustration: SVG illustrations used in the UI.
+ *
+ * @component
+ * @returns {JSX.Element} The rendered landing page.
+ */
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { ArrowRight, BrainCircuit, CheckSquare, ShieldCheck, KeyRound, FileSpreadsheet } from 'lucide-react';
 import { motion, easeOut } from 'framer-motion'; // --- IMPORT FRAMER MOTION ---
 

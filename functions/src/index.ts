@@ -1,3 +1,32 @@
+/**
+ * Cloud Function to retrieve and summarize feedback data for a specific employee from a Google Sheet.
+ * 
+ * This function performs authentication and authorization checks to ensure that only admins or the employee
+ * themselves can access the feedback data. It fetches feedback entries from a Google Sheet linked to the employee,
+ * parses and filters the data based on the requested time frame, and generates summary statistics and timeseries
+ * data for charting. Additionally, it uses Google Gemini AI to analyze feedback comments and extract positive feedback
+ * and areas for improvement.
+ * 
+ * @param request - The callable function request containing:
+ *   - `employeeId`: The ID of the employee whose feedback is being requested.
+ *   - `timeFrame`: The time frame for the summary ("daily", "monthly", "specific", "range", or "full").
+ *   - `date` (optional): The reference date for "daily", "monthly", or "specific" time frames (ISO string).
+ *   - `startDate` (optional): The start date for the "range" time frame (YYYY-MM-DD).
+ *   - `endDate` (optional): The end date for the "range" time frame (YYYY-MM-DD).
+ * 
+ * @returns An object containing:
+ *   - `positiveFeedback`: Array of up to 3 positive feedback objects (with quote and keywords) from AI analysis.
+ *   - `improvementAreas`: Array of up to 3 improvement area objects (with theme and suggestion) from AI analysis.
+ *   - `totalFeedbacks`: The total number of feedback entries in the filtered time frame.
+ *   - `graphData`: Summary statistics for charting (total feedbacks, average understanding, average instructor rating), or null.
+ *   - `graphTimeseries`: Timeseries data for charting (labels, understanding, instructor arrays), or null.
+ * 
+ * @throws {HttpsError} If authentication fails, the user is unauthorized, the employee or sheet is not found,
+ *         or if there are issues fetching or parsing the data.
+ * 
+ * @see {@link https://firebase.google.com/docs/functions/callable}
+ * @see {@link https://developers.google.com/sheets/api}
+ */
 import * as admin from "firebase-admin";
 import { JWT } from "google-auth-library";
 import { google } from "googleapis";
@@ -48,6 +77,55 @@ export const addAdminRole = onCall<AddAdminRoleData>(async (request) => {
         throw new HttpsError("internal", "Could not set admin role.");
     }
 });
+
+// Delete an employee's account and Firestore document
+
+export const deleteEmployee = onCall<{ uid?: string }>(async (request) => {
+    // 1) Must be called by an authenticated user
+    if (!request.auth) {
+        throw new HttpsError(
+            "unauthenticated",
+            "The function must be called while authenticated."
+        );
+    }
+
+    // 2) Must be an admin (custom claim)
+    const isAdmin = request.auth.token.isAdmin as boolean | undefined;
+    if (!isAdmin) {
+        throw new HttpsError(
+            "permission-denied",
+            "Only admins can delete employees."
+        );
+    }
+
+    // 3) Validate input
+    const uid = request.data.uid;
+    if (!uid) {
+        throw new HttpsError(
+            "invalid-argument",
+            "Missing or invalid `uid` parameter."
+        );
+    }
+
+    try {
+        // 4) Delete the Auth user
+        await admin.auth().deleteUser(uid);
+
+        // 5) Delete the Firestore document
+        await admin.firestore().doc(`employees/${uid}`).delete();
+
+        return { message: "User account and profile deleted." };
+    } catch (error: any) {
+        console.error("deleteEmployee error:", error);
+        // wrap any thrown error as HttpsError
+        throw new HttpsError(
+            "internal",
+            error.message || "An unknown error occurred."
+        );
+    }
+});
+
+
 
 // --- MODIFICATION START 1: The new flexible date parsing function ---
 /**

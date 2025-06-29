@@ -1,3 +1,15 @@
+/**
+ * A route protection component for admin-only pages.
+ * 
+ * This component checks if an admin user is authenticated using the `useAdminAuth` context.
+ * While the main user authentication state is loading (from `useUserAuth`), it displays a loading indicator.
+ * If the admin is not authenticated after loading, it redirects to the admin login page.
+ * If authenticated, it renders the provided child components.
+ *
+ * @param {AdminProtectedRouteProps} props - The props for the component.
+ * @param {ReactNode} props.children - The child components to render if the admin is authenticated.
+ * @returns {JSX.Element} The protected route component, a loading indicator, or a redirect.
+ */
 import { Navigate } from 'react-router-dom';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { useUserAuth } from '../context/UserAuthContext';

@@ -1,5 +1,18 @@
-// src/App.tsx
-
+/**
+ * The main application component for Standup Sync.
+ *
+ * - Provides global context providers for React Query, tooltips, user and admin authentication.
+ * - Handles global loading state while authentication contexts initialize.
+ * - Sets up all application routes, including:
+ *   - Public routes (auth, admin login)
+ *   - Employee-protected routes (dashboard, setup, standups, attendance)
+ *   - Admin-protected routes (admin dashboard, employee management)
+ *   - Fallback for 404 Not Found
+ * - Uses custom `ProtectedRoute` and `AdminProtectedRoute` components to guard sensitive routes.
+ * - Integrates two different toaster notification systems (`Toaster` and `Sonner`).
+ *
+ * @component
+ */
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -28,14 +41,27 @@ const queryClient = new QueryClient();
 // Global loading spinner while auth contexts initialize
 const GlobalLoading = () => (
   <div className="min-h-screen flex flex-col items-center justify-center bg-background">
-    <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-primary border-solid"></div>
-    <p className="mt-4 text-lg text-muted-foreground">Verifying session...</p>
+    <div className="relative">
+      <div className="absolute inset-0 blur-xl opacity-20 rounded-full animate-pulse-slow h-24 w-24"></div>
+      <div className="relative h-20 w-20">
+        <div className="absolute inset-0 rounded-full border-[3px] border-muted animate-spin"></div>
+        <div className="absolute inset-2 rounded-full border-[3px] border-primary border-t-transparent animate-spin-slow"></div>
+      </div>
+    </div>
+    <div className="mt-6 space-y-2">
+      <p className="text-lg text-muted-foreground font-medium animate-text-fade">
+        Verifying session
+      </p>
+      <div className="flex justify-center">
+        <div className="h-1 w-12 bg-gradient-to-r from-transparent via-primary to-transparent animate-line-expand"></div>
+      </div>
+    </div>
   </div>
 );
 
 const AppContent = () => {
-  const { user, loading: userLoading, initialized: userInitialized } = useUserAuth();
-  const { admin, loading: adminLoading, initialized: adminInitialized } = useAdminAuth();
+  const { user, initialized: userInitialized } = useUserAuth();
+  const { admin, initialized: adminInitialized } = useAdminAuth();
 
   // Wait until both contexts finish their initial checks
   if (!userInitialized || !adminInitialized) {

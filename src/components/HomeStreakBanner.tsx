@@ -1,3 +1,14 @@
+/**
+ * Displays a banner showing the user's current attendance streak for standups.
+ *
+ * @component
+ * @param {Object} props - Component props.
+ * @param {number | "N/A" | null} props.attendanceStreak - The current attendance streak count, or "N/A" if unavailable, or null if not started.
+ * @param {boolean} props.attendanceLoading - Indicates whether the attendance streak data is currently loading.
+ * @param {boolean} props.isAdmin - Indicates if the current user has admin privileges (currently unused).
+ *
+ * @returns {JSX.Element} The rendered streak banner card.
+ */
 import React from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Flame } from "lucide-react";
